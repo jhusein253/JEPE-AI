@@ -3,6 +3,7 @@ import openpyxl
 import io
 from openpyxl.styles import PatternFill
 from openpyxl.utils import get_column_letter
+from collections import Counter
 
 # Setup halaman
 st.set_page_config(page_title="JEPE AI Pro", layout="wide")
@@ -57,7 +58,6 @@ if uploaded_file:
         # 2. INPUT REFERENSI (Auto-Fetch & Live Update)
         st.header("2. Input Referensi (Auto-Fetch & Live Update)")
         
-        # [REVISI]: Tambahan kontrol baris target untuk mencegah penumpukan data ke minggu lalu
         c_opt1, c_opt2 = st.columns(2)
         with c_opt1:
             hari_terpilih = st.selectbox("Pilih Hari Utama (Hari Ini):", hari_tabel, index=4)
@@ -75,7 +75,6 @@ if uploaded_file:
         for i in range(6):
             d_idx = (idx_day0 - i) % 7
             
-            # Jika mundur dari Sabtu (0) ke Jumat (6), berarti mundur 1 minggu (baris naik ke atas/berkurang 1)
             if i > 0:
                 prev_d_idx = (idx_day0 - (i - 1)) % 7
                 if prev_d_idx == 0 and d_idx == 6:
@@ -83,12 +82,11 @@ if uploaded_file:
             
             c_start = start_cols[d_idx]
             
-            # Ambil data HANYA dari baris target yang benar. 
             vals = [ws.cell(row=current_r, column=c_start+j).value for j in range(4)]
             if any(v is not None for v in vals):
                 auto_val = "".join([str(clean_int(v)) if clean_int(v) is not None else "0" for v in vals])
             else:
-                auto_val = "0000" # Kosongkan jika memang belum ada data di minggu/baris ini
+                auto_val = "0000"
                 
             with cols[i]:
                 user_val = st.text_input(f"{hari_tabel[d_idx]} (-{i}):", value=auto_val, max_chars=4)
@@ -96,19 +94,15 @@ if uploaded_file:
                 update_targets.append((current_r, c_start))
 
         # Live Update Worksheet Memori
-        # Menimpa data di memori Excel dengan inputan user saat ini secara otomatis
         for i, user_val in enumerate(inputs):
             r_target, c_start = update_targets[i]
-            
-            # Pastikan teks berjumlah 4 karakter (jika kurang, ditambah '0' di belakang)
             user_val = user_val.ljust(4, '0')[:4] 
             
             for offset in range(4):
                 try:
-                    # Update nilai sel secara live di memori ke baris yang tepat
                     ws.cell(row=r_target, column=c_start + offset).value = int(user_val[offset])
                 except ValueError:
-                    pass # Abaikan jika input bukan angka
+                    pass
 
         # 3. PENGATURAN
         st.divider()
@@ -125,6 +119,9 @@ if uploaded_file:
             cell_patterns = {}
             total_stats = {6: 0, 5: 0, 4: 0, 3: 0}
             days_indices = [(idx_day0 - k) % 7 for k in range(6)]
+            
+            predictions_raw = {0: [], 1: [], 2: [], 3: []}
+            prediction_cells = set()
 
             for pos_offset in range(4):
                 current_allowed = []
@@ -151,10 +148,55 @@ if uploaded_file:
                             if valid:
                                 total_stats[length] += 1
                                 for r_c, c_c in path: cell_patterns[(r_c, c_c)] = {"length": length, "pos": pos_offset}
+                                
+                                # Proyeksi ke hari esok
+                                r_next = r_start if mode == "Lurus" else (r_start + 1 if mode == "Naik" else r_start - 1)
+                                
+                                if 1 <= r_next <= ws.max_row:
+                                    c_next_day_idx = (idx_day0 + 1) % 7
+                                    c_next = start_cols[c_next_day_idx] + pos_offset
+                                    
+                                    pred_val = clean_int(ws.cell(row=r_next, column=c_next).value)
+                                    if pred_val is not None:
+                                        predictions_raw[pos_offset].append({"val": pred_val, "length": length})
+                                        prediction_cells.add((r_next, c_next))
+                                        
                                 break 
+
+            # [REVISI LOGIKA] Angka Kuat Tunggal & Cadangan Tunggal
+            prediction_results = {}
+            for p in range(4):
+                preds = predictions_raw[p]
+                if not preds: continue
+                
+                max_len = max(x['length'] for x in preds)
+                all_vals = [x['val'] for x in preds]
+                all_counts = Counter(all_vals)
+                
+                # 1. Angka Kuat (HANYA 1 ANGKA): Dari pola terpanjang, diurutkan berdasarkan frekuensi total terbanyak
+                kuat_candidates = list(set([x['val'] for x in preds if x['length'] == max_len]))
+                kuat_candidates.sort(key=lambda val: all_counts[val], reverse=True)
+                angka_kuat = [kuat_candidates[0]] if kuat_candidates else []
+                
+                # 2. Angka Cadangan (HANYA 1 ANGKA): Dari sisa angka dengan frekuensi tertinggi
+                for k in angka_kuat:
+                    if k in all_counts:
+                        del all_counts[k]
+                
+                top_cadangan = all_counts.most_common(1)
+                angka_cadangan = [top_cadangan[0][0]] if top_cadangan else []
+                
+                prediction_results[p] = {
+                    "kuat": angka_kuat,
+                    "cadangan": angka_cadangan,
+                    "max_len": max_len,
+                    "all_counts": Counter(all_vals) # Simpan versi asli untuk ditampilkan di detail
+                }
 
             st.session_state.highlighted = cell_patterns
             st.session_state.stats = total_stats
+            st.session_state.prediction_results = prediction_results
+            st.session_state.prediction_cells = prediction_cells
             st.session_state.scanned = True
             st.rerun()
 
@@ -162,16 +204,42 @@ if uploaded_file:
         if st.session_state.get("scanned"):
             st.divider()
             
-            # Tombol Download (Bebas dari emoji penyebab error encoding)
             excel_buffer = generate_excel(ws, st.session_state.get("highlighted", {}))
             st.download_button(
-                label="Download Hasil Scan (.xlsx)",
+                label="📥 Download Hasil Scan (.xlsx)",
                 data=excel_buffer,
                 file_name="hasil_scan_paito.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
-            st.subheader("Statistik")
+            # UI Prediksi Angka Kuat & Cadangan Tunggal
+            st.subheader("🎯 Prediksi Hari Berikutnya")
+            pos_names = ["As", "Kop", "Kepala", "Ekor"]
+            
+            pred_cols = st.columns(4)
+            for p in range(4):
+                with pred_cols[p]:
+                    st.markdown(f"**Posisi {pos_names[p]}**")
+                    if p in st.session_state.get("prediction_results", {}):
+                        res = st.session_state.prediction_results[p]
+                        
+                        # Hanya menampilkan index [0] karena list sudah pasti berisi maksimal 1 angka
+                        kuat_str = str(res['kuat'][0]) if res['kuat'] else "-"
+                        cadangan_str = str(res['cadangan'][0]) if res['cadangan'] else "-"
+                        
+                        st.success(f"🔥 **Kuat:** {kuat_str}\n\n*(Pola {res['max_len']} Baris)*")
+                        st.info(f"🛡️ **Cadangan:** {cadangan_str}")
+                        
+                        with st.expander("Detail Frekuensi (Semua Pola)"):
+                            for val, count in res['all_counts'].most_common():
+                                status = " (Kuat)" if val in res['kuat'] else (" (Cadangan Utama)" if res['cadangan'] and val == res['cadangan'][0] else "")
+                                st.write(f"Angka {val}: didukung {count} jalur{status}")
+                    else:
+                        st.write("Belum ada pola")
+            
+            st.divider()
+            
+            st.subheader("Statistik Jalur Pola")
             stats = st.session_state.stats
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Pola 6 Hari", f"{stats[6]} Jalur")
@@ -181,6 +249,7 @@ if uploaded_file:
 
             st.subheader("Live Preview Grid")
             highlighted = st.session_state.get("highlighted", {})
+            prediction_cells = st.session_state.get("prediction_cells", set())
             
             html = ["<div style='overflow-x: auto;'><table style='border-collapse: collapse; width: 100%; text-align: center; font-family: monospace; font-size: 12px;'>"]
             
@@ -200,13 +269,20 @@ if uploaded_file:
                         val = ws.cell(row=r, column=c_idx).value
                         display_val = str(val) if val is not None else "-"
                         
+                        is_pred = (r, c_idx) in prediction_cells
                         bg = "#ffffff"
+                        
                         if (r, c_idx) in highlighted:
                             p = highlighted[(r, c_idx)]["pos"]
                             colors = {0: "#3399FF", 1: "#D2B48C", 2: "#22C55E", 3: "#FFD700"}
                             bg = colors.get(p, "#ffffff")
+                        elif is_pred:
+                            bg = "#fee2e2" 
                         
-                        html.append(f"<td style='border: 1px solid #ccc; background-color: {bg}; font-weight: bold; width: 25px; height: 25px;'>{display_val}</td>")
+                        border_style = "2px solid #dc2626" if is_pred else "1px solid #ccc"
+                        text_color = "#dc2626" if is_pred else "inherit"
+                        
+                        html.append(f"<td style='border: {border_style}; background-color: {bg}; color: {text_color}; font-weight: bold; width: 25px; height: 25px;'>{display_val}</td>")
                     
                     html.append("<td style='width: 15px;'></td>")
                     
