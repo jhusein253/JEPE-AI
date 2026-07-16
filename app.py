@@ -123,6 +123,9 @@ if uploaded_file:
             predictions_raw = {0: [], 1: [], 2: [], 3: []}
             prediction_cells = set()
 
+            # Batasi baris maksimum analisa agar mengabaikan baris paling bawah
+            max_analisa_row = ws.max_row - 1
+
             for pos_offset in range(4):
                 current_allowed = []
                 for k in range(6):
@@ -130,7 +133,8 @@ if uploaded_file:
                     digit = int(val_str[ref_pos_offset if use_single_ref else pos_offset])
                     current_allowed.append([digit, (digit + 5) % 10])
 
-                for r_start in range(1, ws.max_row + 1):
+                # Loop hanya berjalan sampai max_analisa_row
+                for r_start in range(1, max_analisa_row + 1):
                     for mode in ["Lurus", "Naik", "Turun"]:
                         if (mode == "Lurus" and not c_lurus) or (mode == "Naik" and not c_naik) or (mode == "Turun" and not c_turun): continue
                         
@@ -138,7 +142,8 @@ if uploaded_file:
                             path, valid = [], True
                             for k in range(length):
                                 r_target = r_start if mode == "Lurus" else (r_start - k if mode == "Naik" else r_start + k)
-                                if r_target < 1 or r_target > ws.max_row: valid = False; break
+                                # Validasi agar jalur pola tidak melewati max_analisa_row
+                                if r_target < 1 or r_target > max_analisa_row: valid = False; break
                                 
                                 cell_val = ws.cell(row=r_target, column=start_cols[days_indices[k]] + pos_offset).value
                                 val = clean_int(cell_val)
@@ -152,7 +157,8 @@ if uploaded_file:
                                 # Proyeksi ke hari esok
                                 r_next = r_start if mode == "Lurus" else (r_start + 1 if mode == "Naik" else r_start - 1)
                                 
-                                if 1 <= r_next <= ws.max_row:
+                                # Validasi agar hasil proyeksi prediksi tidak mengambil dari baris paling bawah
+                                if 1 <= r_next <= max_analisa_row:
                                     c_next_day_idx = (idx_day0 + 1) % 7
                                     c_next = start_cols[c_next_day_idx] + pos_offset
                                     
@@ -163,7 +169,7 @@ if uploaded_file:
                                         
                                 break 
 
-            # [REVISI LOGIKA] Angka Kuat Tunggal & Cadangan Tunggal
+            # Angka Kuat Tunggal & Cadangan Tunggal
             prediction_results = {}
             for p in range(4):
                 preds = predictions_raw[p]
@@ -173,12 +179,12 @@ if uploaded_file:
                 all_vals = [x['val'] for x in preds]
                 all_counts = Counter(all_vals)
                 
-                # 1. Angka Kuat (HANYA 1 ANGKA): Dari pola terpanjang, diurutkan berdasarkan frekuensi total terbanyak
+                # 1. Angka Kuat
                 kuat_candidates = list(set([x['val'] for x in preds if x['length'] == max_len]))
                 kuat_candidates.sort(key=lambda val: all_counts[val], reverse=True)
                 angka_kuat = [kuat_candidates[0]] if kuat_candidates else []
                 
-                # 2. Angka Cadangan (HANYA 1 ANGKA): Dari sisa angka dengan frekuensi tertinggi
+                # 2. Angka Cadangan
                 for k in angka_kuat:
                     if k in all_counts:
                         del all_counts[k]
@@ -190,7 +196,7 @@ if uploaded_file:
                     "kuat": angka_kuat,
                     "cadangan": angka_cadangan,
                     "max_len": max_len,
-                    "all_counts": Counter(all_vals) # Simpan versi asli untuk ditampilkan di detail
+                    "all_counts": Counter(all_vals)
                 }
 
             st.session_state.highlighted = cell_patterns
@@ -213,7 +219,7 @@ if uploaded_file:
             )
             
             # UI Prediksi Angka Kuat & Cadangan Tunggal
-            st.subheader("🎯 Prediksi Hari Berikutnya")
+            st.subheader("🔮 Prediksi Hari Berikutnya")
             pos_names = ["As", "Kop", "Kepala", "Ekor"]
             
             pred_cols = st.columns(4)
@@ -223,12 +229,11 @@ if uploaded_file:
                     if p in st.session_state.get("prediction_results", {}):
                         res = st.session_state.prediction_results[p]
                         
-                        # Hanya menampilkan index [0] karena list sudah pasti berisi maksimal 1 angka
                         kuat_str = str(res['kuat'][0]) if res['kuat'] else "-"
                         cadangan_str = str(res['cadangan'][0]) if res['cadangan'] else "-"
                         
                         st.success(f"🔥 **Kuat:** {kuat_str}\n\n*(Pola {res['max_len']} Baris)*")
-                        st.info(f"🛡️ **Cadangan:** {cadangan_str}")
+                        st.info(f"💡 **Cadangan:** {cadangan_str}")
                         
                         with st.expander("Detail Frekuensi (Semua Pola)"):
                             for val, count in res['all_counts'].most_common():
@@ -259,7 +264,7 @@ if uploaded_file:
                 html.append(f"<th colspan='4'>{h}</th><th style='width: 15px;'></th>") 
             html.append("</tr>")
             
-            # Data Rows
+            # Data Rows (Tetap menampilkan sampai ws.max_row agar baris terakhir terlihat di grid)
             for r in range(max(1, ws.max_row - 30), ws.max_row + 1):
                 html.append(f"<tr><td style='border: 1px solid #ccc; background-color: #f0f0f0; width: 25px; height: 25px; text-align: center; font-weight: bold;'>{r}</td>")
                 
@@ -267,28 +272,4 @@ if uploaded_file:
                     for offset in range(4):
                         c_idx = start_col + offset
                         val = ws.cell(row=r, column=c_idx).value
-                        display_val = str(val) if val is not None else "-"
-                        
-                        is_pred = (r, c_idx) in prediction_cells
-                        bg = "#ffffff"
-                        
-                        if (r, c_idx) in highlighted:
-                            p = highlighted[(r, c_idx)]["pos"]
-                            colors = {0: "#3399FF", 1: "#D2B48C", 2: "#22C55E", 3: "#FFD700"}
-                            bg = colors.get(p, "#ffffff")
-                        elif is_pred:
-                            bg = "#fee2e2" 
-                        
-                        border_style = "2px solid #dc2626" if is_pred else "1px solid #ccc"
-                        text_color = "#dc2626" if is_pred else "inherit"
-                        
-                        html.append(f"<td style='border: {border_style}; background-color: {bg}; color: {text_color}; font-weight: bold; width: 25px; height: 25px;'>{display_val}</td>")
-                    
-                    html.append("<td style='width: 15px;'></td>")
-                    
-                html.append("</tr>")
-            html.append("</table></div>")
-            st.markdown("".join(html), unsafe_allow_html=True)
-
-    except Exception as e:
-        st.error(f"Terjadi kesalahan saat membaca file: {e}")
+                        display_val = str(val) if val is not
