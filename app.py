@@ -272,4 +272,4 @@ if uploaded_file:
                     for offset in range(4):
                         c_idx = start_col + offset
                         val = ws.cell(row=r, column=c_idx).value
-                        display_val = str(val) if val is not
+                        display_val = str(val) if val is not None else "-"
