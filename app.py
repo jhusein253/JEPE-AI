@@ -273,3 +273,27 @@ if uploaded_file:
                         c_idx = start_col + offset
                         val = ws.cell(row=r, column=c_idx).value
                         display_val = str(val) if val is not None else "-"
+                        
+                        is_pred = (r, c_idx) in prediction_cells
+                        bg = "#ffffff"
+                        
+                        if (r, c_idx) in highlighted:
+                            p = highlighted[(r, c_idx)]["pos"]
+                            colors = {0: "#3399FF", 1: "#D2B48C", 2: "#22C55E", 3: "#FFD700"}
+                            bg = colors.get(p, "#ffffff")
+                        elif is_pred:
+                            bg = "#fee2e2" 
+                        
+                        border_style = "2px solid #dc2626" if is_pred else "1px solid #ccc"
+                        text_color = "#dc2626" if is_pred else "inherit"
+                        
+                        html.append(f"<td style='border: {border_style}; background-color: {bg}; color: {text_color}; font-weight: bold; width: 25px; height: 25px;'>{display_val}</td>")
+                    
+                    html.append("<td style='width: 15px;'></td>")
+                    
+                html.append("</tr>")
+            html.append("</table></div>")
+            st.markdown("".join(html), unsafe_allow_html=True)
+
+    except Exception as e:
+        st.error(f"Terjadi kesalahan saat membaca file: {e}")
