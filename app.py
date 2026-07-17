@@ -3,7 +3,6 @@ import openpyxl
 import io
 from openpyxl.styles import PatternFill
 from openpyxl.utils import get_column_letter
-from collections import Counter
 
 # Setup halaman
 st.set_page_config(page_title="JEPE AI Pro", layout="wide")
@@ -123,6 +122,7 @@ if uploaded_file:
             predictions_raw = {0: [], 1: [], 2: [], 3: []}
             prediction_cells = set()
 
+            # Mengumpulkan Semua Pola dari Semua Posisi
             for pos_offset in range(4):
                 current_allowed = []
                 for k in range(6):
@@ -149,7 +149,6 @@ if uploaded_file:
                                 total_stats[length] += 1
                                 for r_c, c_c in path: cell_patterns[(r_c, c_c)] = {"length": length, "pos": pos_offset}
                                 
-                                # Proyeksi ke hari esok
                                 r_next = r_start if mode == "Lurus" else (r_start + 1 if mode == "Naik" else r_start - 1)
                                 
                                 if 1 <= r_next <= ws.max_row:
@@ -163,43 +162,45 @@ if uploaded_file:
                                         
                                 break 
 
-            # [REVISI LOGIKA] Angka Kuat dengan Sistem Bobot (Prioritas Utama + Dukungan Pola Lain)
+            # [REVISI LOGIKA] Pencarian di Semua Posisi sebagai Jalur Dukungan
             prediction_results = {}
-            for p in range(4):
-                preds = predictions_raw[p]
-                if not preds: continue
-                
-                max_len = max(x['length'] for x in preds)
-                
-                # 1. Menentukan Bobot Skor (Weighting)
-                # Pola yang lebih panjang memiliki bobot jauh lebih tinggi
-                weight_map = {6: 100, 5: 50, 4: 20, 3: 5}
-                
-                score_board = {}
-                all_vals = []
-                
-                # 2. Kalkulasi Poin Dukungan Pola
-                for x in preds:
-                    val = x['val']
-                    length = x['length']
-                    all_vals.append(val)
-                    
-                    if val not in score_board:
-                        score_board[val] = 0
-                    score_board[val] += weight_map.get(length, 1)
+            weight_map = {6: 100, 5: 50, 4: 20, 3: 5}
 
-                # 3. Pengurutan Kandidat Berdasarkan Skor Tertinggi
+            for p in range(4):
+                preds_utama = predictions_raw[p]
+                if not preds_utama: continue
+                
+                max_len_utama = max(x['length'] for x in preds_utama)
+                
+                # Syarat Mutlak: Kandidat HARUS angka yang memiliki pola di posisinya sendiri (Utama)
+                kandidat_valid = set(x['val'] for x in preds_utama)
+                
+                score_board = {k: 0 for k in kandidat_valid}
+                support_counts = {k: 0 for k in kandidat_valid}
+                
+                # Kalkulasi Skor dari SEMUA POSISI Lintas Kolom (Jalur Dukungan)
+                for any_pos in range(4):
+                    for x in predictions_raw[any_pos]:
+                        val = x['val']
+                        if val in kandidat_valid:
+                            length = x['length']
+                            # Bobot lebih besar (x2) jika jalurnya ada di posisi utama, x1 jika dukungan dari posisi lain
+                            multiplier = 2 if any_pos == p else 1
+                            score_board[val] += (weight_map.get(length, 1) * multiplier)
+                            support_counts[val] += 1
+
+                # Urutkan Kandidat Berdasarkan Akumulasi Skor Dukungan
                 sorted_candidates = sorted(score_board.items(), key=lambda item: item[1], reverse=True)
                 
-                # 4. Filter Angka Kuat & Cadangan Tunggal
+                # Filter Angka Kuat & Cadangan Tunggal
                 angka_kuat = [sorted_candidates[0][0]] if sorted_candidates else []
                 angka_cadangan = [sorted_candidates[1][0]] if len(sorted_candidates) > 1 else []
                 
                 prediction_results[p] = {
                     "kuat": angka_kuat,
                     "cadangan": angka_cadangan,
-                    "max_len": max_len,
-                    "all_counts": Counter(all_vals), 
+                    "max_len": max_len_utama,
+                    "all_counts": support_counts, 
                     "scores": score_board 
                 }
 
@@ -223,7 +224,7 @@ if uploaded_file:
             )
             
             # UI Prediksi Angka Kuat & Cadangan Tunggal
-            st.subheader("🎯 Prediksi Hari Berikutnya (Berdasarkan Dukungan Terbanyak)")
+            st.subheader("🎯 Prediksi Hari Berikutnya (Dukungan Lintas Posisi)")
             pos_names = ["As", "Kop", "Kepala", "Ekor"]
             
             pred_cols = st.columns(4)
@@ -236,27 +237,26 @@ if uploaded_file:
                         kuat_str = str(res['kuat'][0]) if res['kuat'] else "-"
                         cadangan_str = str(res['cadangan'][0]) if res['cadangan'] else "-"
                         
-                        st.success(f"🔥 **Kuat:** {kuat_str}\n\n*(Pola Max: {res['max_len']} Baris)*")
+                        st.success(f"🔥 **Kuat:** {kuat_str}\n\n*(Pola Utama Max: {res['max_len']} Baris)*")
                         st.info(f"🛡️ **Cadangan:** {cadangan_str}")
                         
-                        with st.expander("Detail Dukungan Pola"):
-                            # Menampilkan peringkat berdasarkan skor dukungan
+                        with st.expander("Rincian Skor & Dukungan Lintas Posisi"):
                             for val, score in sorted(res['scores'].items(), key=lambda item: item[1], reverse=True):
                                 status = " (Kuat 🏆)" if val in res['kuat'] else (" (Cadangan 🥈)" if res['cadangan'] and val == res['cadangan'][0] else "")
                                 freq = res['all_counts'][val]
-                                st.write(f"Angka **{val}**: {freq} jalur dukungan | **Skor: {score}** {status}")
+                                st.write(f"Angka **{val}**: didukung **{freq} total jalur** | **Skor: {score}** {status}")
                     else:
                         st.write("Belum ada pola")
             
             st.divider()
             
-            st.subheader("📊 Statistik Jalur Pola")
+            st.subheader("📊 Statistik Analisis Paito")
             stats = st.session_state.stats
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Pola 6 Hari", f"{stats[6]} Jalur")
-            c2.metric("Pola 5 Hari", f"{stats[5]} Jalur")
-            c3.metric("Pola 4 Hari", f"{stats[4]} Jalur")
-            c4.metric("Pola 3 Hari", f"{stats[3]} Jalur")
+            c1.metric("Pola 6 Hari (Akurasi Tinggi)", f"{stats[6]} Jalur")
+            c2.metric("Pola 5 Hari (Stabil)", f"{stats[5]} Jalur")
+            c3.metric("Pola 4 Hari (Pendukung)", f"{stats[4]} Jalur")
+            c4.metric("Pola 3 Hari (Minor)", f"{stats[3]} Jalur")
 
             st.subheader("Live Preview Grid")
             highlighted = st.session_state.get("highlighted", {})
