@@ -94,7 +94,6 @@ if uploaded_file:
                 try: ws.cell(row=r_target, column=c_start + offset).value = int(user_val[offset])
                 except ValueError: pass
                 
-        # Menyimpan baris paling atas dari query input untuk membatasi scan
         min_query_row = current_r
 
         # 3. PENGATURAN
@@ -114,8 +113,6 @@ if uploaded_file:
             predictions_raw = {0: [], 1: [], 2: [], 3: []}
             prediction_cells = set()
             
-            # [REVISI]: Batas bawah analisa sekarang di-set tepat di atas input user, 
-            # agar baris terbawah tidak ikut tertandai sebagai pola
             max_analisa_row = min_query_row - 1
 
             for target_pos in range(4):
@@ -146,13 +143,16 @@ if uploaded_file:
                                 
                                 if valid:
                                     total_stats[length] += 1
-                                    for r_c, c_c in path: 
-                                        if (r_c, c_c) not in cell_patterns or cell_patterns[(r_c, c_c)]["length"] <= length:
-                                            cell_patterns[(r_c, c_c)] = {"length": length, "pos": target_pos}
+                                    
+                                    # [REVISI]: Pewarnaan di Live Preview dan Download Excel HANYA dilakukan jika 
+                                    # posisi pencarian sejajar dengan aslinya (As=As, Kop=Kop)
+                                    if search_pos == target_pos:
+                                        for r_c, c_c in path: 
+                                            if (r_c, c_c) not in cell_patterns or cell_patterns[(r_c, c_c)]["length"] <= length:
+                                                cell_patterns[(r_c, c_c)] = {"length": length, "pos": target_pos}
                                     
                                     r_next = r_start if mode == "Lurus" else (r_start + 1 if mode == "Naik" else r_start - 1)
                                     
-                                    # Penyesuaian kalender: Jika prediksi menyeberang dari Jumat ke Sabtu, turun 1 baris
                                     if idx_day0 == 6:
                                         r_next += 1
                                         
@@ -164,7 +164,10 @@ if uploaded_file:
                                             predictions_raw[target_pos].append({
                                                 "val": pred_val, "length": length, "is_own_pos": (search_pos == target_pos) 
                                             })
-                                            prediction_cells.add((r_next, c_next))
+                                            
+                                            # Kotak merah prediksi juga HANYA ditandai jika posisinya sejajar
+                                            if search_pos == target_pos:
+                                                prediction_cells.add((r_next, c_next))
                                     break 
 
             prediction_results = {}
