@@ -7,7 +7,7 @@ from collections import Counter
 
 # Setup halaman
 st.set_page_config(page_title="JEPE AI Pro", layout="wide")
-st.title("JEPE AI - Advanced Scanner")
+st.title("JEPE AI - Advanced Scanner (6-Days Strict Mode)")
 
 # Fungsi pembersih data
 def clean_int(v):
@@ -52,8 +52,8 @@ if uploaded_file:
         hari_tabel = ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
         start_cols = [1, 6, 11, 16, 21, 26, 31]
 
-        # 2. INPUT REFERENSI (Auto-Fetch & Live Update)
-        st.header("2. Input Referensi")
+        # 2. INPUT REFERENSI
+        st.header("2. Input Referensi (6 Hari Terakhir)")
         
         c_opt1, c_opt2 = st.columns(2)
         with c_opt1:
@@ -87,7 +87,6 @@ if uploaded_file:
                 inputs.append(user_val)
                 update_targets.append((current_r, c_start))
 
-        # Update Memori Internal
         for i, user_val in enumerate(inputs):
             r_target, c_start = update_targets[i]
             user_val = user_val.ljust(4, '0')[:4] 
@@ -105,7 +104,10 @@ if uploaded_file:
         c_naik = st.checkbox("Diagonal Naik", value=True)
         c_turun = st.checkbox("Diagonal Turun", value=True)
         
-        # RULE 2: Menu Pencarian Bebas (Toleransi Loncat)
+        # RULE BARU: Filter Panjang Pola Ketat (Default 6)
+        c_len = st.multiselect("Panjang Pola yang Dicari (Hari):", [6, 5, 4, 3], default=[6], 
+                               help="Sesuai instruksi, pencarian default difokuskan murni pada riwayat 6 hari terakhir.")
+        
         c_bebas = st.checkbox("🔥 Mode Pencarian Bebas (Toleransi Loncat 1 Kotak)", value=False, 
                               help="Jika diaktifkan, pola tidak harus bersambung rapat. Boleh meloncati 1 baris kosong.")
         
@@ -122,7 +124,7 @@ if uploaded_file:
             predictions_raw = {0: [], 1: [], 2: [], 3: []}
             prediction_cells = set()
             
-            # RULE 1: Baris paling bawah tidak termasuk pola historis yang dianalisa
+            # Rule: Baris paling bawah tidak termasuk pola historis yang dianalisa
             max_scan_row = ws.max_row - 1 
 
             for pos_offset in range(4):
@@ -132,41 +134,34 @@ if uploaded_file:
                     digit = int(val_str[ref_pos_offset if use_single_ref else pos_offset])
                     current_allowed.append([digit, (digit + 5) % 10])
 
-                # Pencarian Pola Dinamis (Mengakomodasi "Pencarian Bebas")
                 for r_start in range(1, max_scan_row + 1):
                     for mode in ["Lurus", "Naik", "Turun"]:
                         if (mode == "Lurus" and not c_lurus) or (mode == "Naik" and not c_naik) or (mode == "Turun" and not c_turun): 
                             continue
                         
-                        for length in [6, 5, 4, 3]:
-                            # Inisialisasi titik awal (Hari 0)
+                        # Loop ini sekarang dikendalikan oleh filter 6 hari
+                        for length in c_len:
                             first_val = clean_int(ws.cell(row=r_start, column=start_cols[days_indices[0]] + pos_offset).value)
                             if first_val not in current_allowed[0]:
                                 continue
                                 
                             paths = [[(r_start, start_cols[days_indices[0]] + pos_offset)]]
                             
-                            # Eksplorasi ke belakang sesuai panjang pola yang dicari
                             for k in range(1, length):
                                 new_paths = []
                                 for path in paths:
                                     prev_r = path[-1][0]
                                     
-                                    # Penentuan langkah pergeseran baris
                                     if mode == "Lurus":
-                                        # Lurus konstan. Jika bebas, boleh naik/turun 1 baris.
                                         steps = [0, 1, -1] if c_bebas else [0] 
                                     elif mode == "Naik":
-                                        # Naik ke masa lalu = baris berkurang. Jika bebas, bisa -1 atau -2 (loncat 1 kotak)
                                         steps = [-1, -2] if c_bebas else [-1]
                                     elif mode == "Turun":
-                                        # Turun ke masa lalu = baris bertambah. Jika bebas, bisa +1 atau +2
                                         steps = [1, 2] if c_bebas else [1]
                                         
                                     for step in steps:
                                         r_target = prev_r + step
                                         
-                                        # Pastikan tidak menyentuh/melewati baris terbawah sesuai Rule 1
                                         if r_target < 1 or r_target > max_scan_row:
                                             continue
                                             
@@ -176,19 +171,15 @@ if uploaded_file:
                                         if val in current_allowed[k]:
                                             new_paths.append(path + [(r_target, c_idx)])
                                 paths = new_paths
-                                if not paths: break # Gagal membentuk pola sepanjang k
+                                if not paths: break
                             
-                            # Eksekusi jika pola utuh ditemukan
                             for valid_path in paths:
                                 if len(valid_path) == length:
                                     total_stats[length] += 1
                                     for r_c, c_c in valid_path: 
-                                        # Ambil yang terpanjang untuk visualisasi UI
                                         if (r_c, c_c) not in cell_patterns or cell_patterns[(r_c, c_c)]["length"] < length:
                                             cell_patterns[(r_c, c_c)] = {"length": length, "pos": pos_offset}
                                     
-                                    # Proyeksi ke hari esok (Kalkulasi dari Titik Awal Hari 0)
-                                    # Jika polanya "Naik" ke masa lalu, berarti esok "Turun" (+1)
                                     if mode == "Lurus": r_next = r_start 
                                     elif mode == "Naik": r_next = r_start + 1 
                                     elif mode == "Turun": r_next = r_start - 1
@@ -202,7 +193,7 @@ if uploaded_file:
                                             predictions_raw[pos_offset].append({"val": pred_val, "length": length})
                                             prediction_cells.add((r_next, c_next))
 
-            # RULE 3: Angka Kuat (Panjang & Terbanyak)
+            # Logika Angka Kuat
             prediction_results = {}
             for p in range(4):
                 preds = predictions_raw[p]
@@ -210,17 +201,12 @@ if uploaded_file:
                 
                 max_len = max(x['length'] for x in preds)
                 all_vals = [x['val'] for x in preds]
-                all_counts = Counter(all_vals) # Frekuensi total dari SEMUA panjang pola
+                all_counts = Counter(all_vals)
                 
-                # Kandidat angka kuat disaring dari pola dengan max_len
                 kuat_candidates = list(set([x['val'] for x in preds if x['length'] == max_len]))
-                
-                # Urutkan berdasarkan total frekuensi dukungan terbanyak
                 kuat_candidates.sort(key=lambda val: all_counts[val], reverse=True)
-                
                 angka_kuat = [kuat_candidates[0]] if kuat_candidates else []
                 
-                # Cadangan (Menghapus angka kuat dari counter untuk mencari runner-up)
                 for k in angka_kuat:
                     if k in all_counts:
                         del all_counts[k]
@@ -228,7 +214,6 @@ if uploaded_file:
                 top_cadangan = all_counts.most_common(1)
                 angka_cadangan = [top_cadangan[0][0]] if top_cadangan else []
                 
-                # Restore counter untuk ditampilkan utuh di UI
                 all_counts = Counter(all_vals)
                 
                 prediction_results[p] = {
@@ -245,7 +230,7 @@ if uploaded_file:
             st.session_state.scanned = True
             st.rerun()
 
-        # 5. OUTPUT UI (Tidak Ada Perubahan Signifikan pada Layout)
+        # 5. OUTPUT
         if st.session_state.get("scanned"):
             st.divider()
             excel_buffer = generate_excel(ws, st.session_state.get("highlighted", {}))
@@ -256,7 +241,7 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
-            st.subheader("🎯 Prediksi Hari Berikutnya (Rule Angka Kuat)")
+            st.subheader("🎯 Prediksi Hari Berikutnya (Angka Kuat)")
             pos_names = ["As", "Kop", "Kepala", "Ekor"]
             pred_cols = st.columns(4)
             
@@ -271,12 +256,12 @@ if uploaded_file:
                         st.success(f"🔥 **Kuat:** {kuat_str}\n\n*(Pola {res['max_len']} Baris)*")
                         st.info(f"🛡️ **Cadangan:** {cadangan_str}")
                         
-                        with st.expander("Detail Frekuensi (Semua Pola)"):
+                        with st.expander("Detail Frekuensi"):
                             for val, count in res['all_counts'].most_common():
                                 status = " (Kuat)" if val in res['kuat'] else (" (Cadangan)" if res['cadangan'] and val == res['cadangan'][0] else "")
                                 st.write(f"Angka {val}: didukung {count} pola{status}")
                     else:
-                        st.write("Belum ada pola")
+                        st.write("Belum ada pola (6 Hari)")
             
             st.divider()
             st.subheader("Statistik Jalur Pola")
