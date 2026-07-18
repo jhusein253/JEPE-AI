@@ -7,12 +7,17 @@ from collections import Counter
 
 # Setup halaman
 st.set_page_config(page_title="JEPE AI Pro", layout="wide")
-st.title("JEPE AI - Advanced Scanner (6-Days Strict Mode)")
+st.title("JEPE AI - Advanced Scanner (Strict, Single Ref & Ganjil/Genap)")
 
 # Fungsi pembersih data
 def clean_int(v):
     try: return int(float(str(v).strip()))
     except (ValueError, TypeError): return None
+
+# Fungsi Cek Ganjil/Genap
+def cek_gg(val):
+    if val is None: return ""
+    return "Ganjil" if val % 2 != 0 else "Genap"
 
 # Fungsi generate_excel dengan lebar kolom 3
 def generate_excel(original_ws, highlighted_data):
@@ -104,16 +109,16 @@ if uploaded_file:
         c_naik = st.checkbox("Diagonal Naik", value=True)
         c_turun = st.checkbox("Diagonal Turun", value=True)
         
-        # RULE BARU: Filter Panjang Pola Ketat (Default 6)
-        c_len = st.multiselect("Panjang Pola yang Dicari (Hari):", [6, 5, 4, 3], default=[6], 
-                               help="Sesuai instruksi, pencarian default difokuskan murni pada riwayat 6 hari terakhir.")
-        
         c_bebas = st.checkbox("🔥 Mode Pencarian Bebas (Toleransi Loncat 1 Kotak)", value=False, 
-                              help="Jika diaktifkan, pola tidak harus bersambung rapat. Boleh meloncati 1 baris kosong.")
+                              help="Jika diaktifkan, pola tidak harus bersambung rapat. Boleh meloncati maksimal 1 baris kosong.")
         
         use_single_ref = st.checkbox("Mode Acuan Posisi Tunggal", value=False)
         ref_pos_name = st.selectbox("Posisi Acuan:", ["As", "Kop", "Kepala", "Ekor"], index=0, disabled=not use_single_ref)
         ref_pos_offset = ["As", "Kop", "Kepala", "Ekor"].index(ref_pos_name)
+
+        # MENU BARU: Ganjil/Genap
+        c_ganjil_genap = st.checkbox("☯️ Tampilkan Analisa Ganjil/Genap", value=False, 
+                                     help="Menampilkan analisis Ganjil atau Genap pada hasil prediksi keluaran di 4 posisi.")
 
         # 4. LOGIKA SCANNING
         if st.button("JALANKAN ANALISA"):
@@ -124,7 +129,6 @@ if uploaded_file:
             predictions_raw = {0: [], 1: [], 2: [], 3: []}
             prediction_cells = set()
             
-            # Rule: Baris paling bawah tidak termasuk pola historis yang dianalisa
             max_scan_row = ws.max_row - 1 
 
             for pos_offset in range(4):
@@ -139,8 +143,7 @@ if uploaded_file:
                         if (mode == "Lurus" and not c_lurus) or (mode == "Naik" and not c_naik) or (mode == "Turun" and not c_turun): 
                             continue
                         
-                        # Loop ini sekarang dikendalikan oleh filter 6 hari
-                        for length in c_len:
+                        for length in [6, 5, 4, 3]:
                             first_val = clean_int(ws.cell(row=r_start, column=start_cols[days_indices[0]] + pos_offset).value)
                             if first_val not in current_allowed[0]:
                                 continue
@@ -193,7 +196,6 @@ if uploaded_file:
                                             predictions_raw[pos_offset].append({"val": pred_val, "length": length})
                                             prediction_cells.add((r_next, c_next))
 
-            # Logika Angka Kuat
             prediction_results = {}
             for p in range(4):
                 preds = predictions_raw[p]
@@ -205,6 +207,7 @@ if uploaded_file:
                 
                 kuat_candidates = list(set([x['val'] for x in preds if x['length'] == max_len]))
                 kuat_candidates.sort(key=lambda val: all_counts[val], reverse=True)
+                
                 angka_kuat = [kuat_candidates[0]] if kuat_candidates else []
                 
                 for k in angka_kuat:
@@ -227,6 +230,7 @@ if uploaded_file:
             st.session_state.stats = total_stats
             st.session_state.prediction_results = prediction_results
             st.session_state.prediction_cells = prediction_cells
+            st.session_state.c_ganjil_genap = c_ganjil_genap # Simpan state menu
             st.session_state.scanned = True
             st.rerun()
 
@@ -245,23 +249,38 @@ if uploaded_file:
             pos_names = ["As", "Kop", "Kepala", "Ekor"]
             pred_cols = st.columns(4)
             
+            # Ambil status menu ganjil genap
+            show_gg = st.session_state.get("c_ganjil_genap", False)
+            
             for p in range(4):
                 with pred_cols[p]:
                     st.markdown(f"**Posisi {pos_names[p]}**")
                     if p in st.session_state.get("prediction_results", {}):
                         res = st.session_state.prediction_results[p]
-                        kuat_str = str(res['kuat'][0]) if res['kuat'] else "-"
-                        cadangan_str = str(res['cadangan'][0]) if res['cadangan'] else "-"
                         
-                        st.success(f"🔥 **Kuat:** {kuat_str}\n\n*(Pola {res['max_len']} Baris)*")
+                        # Logika Display Angka Kuat
+                        if res['kuat']:
+                            kuat_val = res['kuat'][0]
+                            kuat_str = f"{kuat_val} ({cek_gg(kuat_val)})" if show_gg else str(kuat_val)
+                        else:
+                            kuat_str = "-"
+                            
+                        # Logika Display Angka Cadangan
+                        if res['cadangan']:
+                            cad_val = res['cadangan'][0]
+                            cadangan_str = f"{cad_val} ({cek_gg(cad_val)})" if show_gg else str(cad_val)
+                        else:
+                            cadangan_str = "-"
+                        
+                        st.success(f"🔥 **Kuat:** {kuat_str}\n\n*(Dari Pola {res['max_len']} Baris)*")
                         st.info(f"🛡️ **Cadangan:** {cadangan_str}")
                         
-                        with st.expander("Detail Frekuensi"):
+                        with st.expander("Detail Frekuensi (Keseluruhan)"):
                             for val, count in res['all_counts'].most_common():
                                 status = " (Kuat)" if val in res['kuat'] else (" (Cadangan)" if res['cadangan'] and val == res['cadangan'][0] else "")
-                                st.write(f"Angka {val}: didukung {count} pola{status}")
+                                st.write(f"Angka {val}: didukung {count} jalur{status}")
                     else:
-                        st.write("Belum ada pola (6 Hari)")
+                        st.write("Belum ada pola (Min. 3 Hari)")
             
             st.divider()
             st.subheader("Statistik Jalur Pola")
