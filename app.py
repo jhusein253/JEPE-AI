@@ -7,14 +7,14 @@ from collections import Counter
 
 # Setup halaman
 st.set_page_config(page_title="JEPE AI Pro", layout="wide")
-st.title("JEPE AI - Advanced Scanner (Utama & Pendukung)")
+st.title("JEPE AI - Advanced Scanner (Pola & Warna Target)")
 
 # Fungsi pembersih data
 def clean_int(v):
     try: return int(float(str(v).strip()))
     except (ValueError, TypeError): return None
 
-# Fungsi generate_excel dengan penambahan Teks Prediksi di samping tabel
+# Fungsi generate_excel dengan penambahan Teks Warna & Prediksi
 def generate_excel(original_ws, highlighted_data, prediction_results, mode_text):
     new_wb = openpyxl.Workbook()
     new_ws = new_wb.active
@@ -35,15 +35,17 @@ def generate_excel(original_ws, highlighted_data, prediction_results, mode_text)
                 hex_color = colors.get(pos, "FFFF00")
                 new_ws.cell(row=r, column=c).fill = PatternFill(start_color=hex_color, end_color=hex_color, fill_type="solid")
     
-    # Menambahkan Menu Hasil Scan & Prediksi di sebelah kanan grid Excel
+    # Menambahkan Menu Hasil Scan & Keterangan Warna di Excel
     start_col_info = original_ws.max_column + 2
     new_ws.cell(row=2, column=start_col_info).value = "🎯 HASIL SCAN POLA & PREDIKSI"
     new_ws.cell(row=3, column=start_col_info).value = f"Mode Aktif: {mode_text}"
     
     pos_names = ["As", "Kop", "Kepala", "Ekor"]
+    colors_text_xl = {0: "Warna Biru", 1: "Warna Coklat", 2: "Warna Hijau", 3: "Warna Kuning"}
+    
     row_idx = 5
     for p in range(4):
-        new_ws.cell(row=row_idx, column=start_col_info).value = f"➤ POSISI {pos_names[p].upper()}"
+        new_ws.cell(row=row_idx, column=start_col_info).value = f"➤ POSISI {pos_names[p].upper()} ({colors_text_xl[p]})"
         if p in prediction_results and prediction_results[p]['kuat']:
             res = prediction_results[p]
             kuat_str = str(res['kuat'][0])
@@ -139,6 +141,7 @@ if uploaded_file:
             max_scan_row = ws.max_row - 1 
             mode_text = f"Acuan Tunggal ({ref_pos_name})" if use_single_ref else "Normal (Utama & Pendukung)"
 
+            # Loop Target Posisi yang ingin diprediksi
             for target_pos in range(4):
                 current_allowed = []
                 for k in range(6):
@@ -147,6 +150,7 @@ if uploaded_file:
                     digit = int(val_str[ref_idx])
                     current_allowed.append([digit, (digit + 5) % 10])
 
+                # Loop mencari pola di semua lajur (Utama & Pendukung)
                 for search_pos in range(4):
                     is_utama = (search_pos == target_pos)
 
@@ -188,8 +192,7 @@ if uploaded_file:
                                     if len(valid_path) == length:
                                         total_stats[length] += 1
                                         
-                                        # FILTER HIGHLIGHT:
-                                        # Jika Single Ref: Warna akan mengikuti Posisi Acuan, Jika Normal: Warna mengikuti Jalur Utama
+                                        # LOGIKA WARNA (HIGHLIGHT)
                                         should_highlight = False
                                         pos_color_idx = target_pos
                                         
@@ -213,17 +216,21 @@ if uploaded_file:
                                         
                                         if 1 <= r_next <= ws.max_row:
                                             c_next_day_idx = (idx_day0 + 1) % 7
-                                            c_next = start_cols[c_next_day_idx] + search_pos
                                             
-                                            pred_val = clean_int(ws.cell(row=r_next, column=c_next).value)
+                                            # BUG FIXED: Angka prediksi harus diambil dari kolom target_pos, bukan search_pos
+                                            c_next_pred = start_cols[c_next_day_idx] + target_pos
+                                            
+                                            pred_val = clean_int(ws.cell(row=r_next, column=c_next_pred).value)
                                             if pred_val is not None:
                                                 predictions_raw[target_pos].append({
                                                     "val": pred_val, 
                                                     "length": length,
                                                     "is_utama": is_utama
                                                 })
+                                                
+                                                # Highlight Target Prediksi yang dicari
                                                 if should_highlight:
-                                                    prediction_cells.add((r_next, c_next))
+                                                    prediction_cells.add((r_next, c_next_pred))
 
             # RULE ANGKA KUAT
             prediction_results = {}
@@ -272,7 +279,6 @@ if uploaded_file:
         if st.session_state.get("scanned"):
             st.divider()
             
-            # Excel di-generate dengan menyertakan Teks Prediksi
             excel_buffer = generate_excel(
                 ws, 
                 st.session_state.get("highlighted", {}), 
@@ -291,11 +297,13 @@ if uploaded_file:
             st.subheader(f"🎯 Prediksi Hari Berikutnya (Mode: {active_mode_text})")
             
             pos_names = ["As", "Kop", "Kepala", "Ekor"]
+            colors_ui = {0: "🟦 Biru", 1: "🟫 Coklat", 2: "🟩 Hijau", 3: "🟨 Kuning"}
             pred_cols = st.columns(4)
             
             for p in range(4):
                 with pred_cols[p]:
-                    st.markdown(f"**Posisi {pos_names[p]}**")
+                    # MENAMPILKAN KETERANGAN WARNA DI MENU PREDIKSI
+                    st.markdown(f"**Posisi {pos_names[p]} ({colors_ui[p]})**")
                     if p in st.session_state.get("prediction_results", {}):
                         res = st.session_state.prediction_results[p]
                         kuat_str = str(res['kuat'][0]) if res['kuat'] else "-"
@@ -322,7 +330,6 @@ if uploaded_file:
             c3.metric("Pola 4 Hari", f"{stats[4]} Jalur")
             c4.metric("Pola 3 Hari", f"{stats[3]} Jalur")
 
-            # Penambahan Indikator Mode di Judul Live Preview
             st.subheader(f"Live Preview Grid (Mode: {active_mode_text})")
             highlighted = st.session_state.get("highlighted", {})
             prediction_cells = st.session_state.get("prediction_cells", set())
