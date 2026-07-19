@@ -104,9 +104,6 @@ if uploaded_file:
         c_naik = st.checkbox("Diagonal Naik", value=True)
         c_turun = st.checkbox("Diagonal Turun", value=True)
         
-        c_bebas = st.checkbox("🔥 Mode Pencarian Bebas (Toleransi Loncat 1 Kotak)", value=False, 
-                              help="Jika diaktifkan, pola tidak harus bersambung rapat. Boleh meloncati maksimal 1 baris kosong.")
-        
         use_single_ref = st.checkbox("Mode Acuan Posisi Tunggal", value=False)
         ref_pos_name = st.selectbox("Posisi Acuan:", ["As", "Kop", "Kepala", "Ekor"], index=0, disabled=not use_single_ref)
         ref_pos_offset = ["As", "Kop", "Kepala", "Ekor"].index(ref_pos_name)
@@ -122,7 +119,6 @@ if uploaded_file:
             
             max_scan_row = ws.max_row - 1 
 
-            # Target posisi yang sedang diprediksi
             for target_pos in range(4):
                 current_allowed = []
                 for k in range(6):
@@ -131,19 +127,15 @@ if uploaded_file:
                     digit = int(val_str[ref_idx])
                     current_allowed.append([digit, (digit + 5) % 10])
 
-                # LOOP BARU: Mencari ke semua lajur posisi (0 sampai 3)
                 for search_pos in range(4):
-                    # Menentukan apakah ini Pola Utama (lajur sama) atau Pendukung (lajur berbeda)
                     is_utama = (search_pos == target_pos)
 
-                    # Pencarian Pola
                     for r_start in range(1, max_scan_row + 1):
                         for mode in ["Lurus", "Naik", "Turun"]:
                             if (mode == "Lurus" and not c_lurus) or (mode == "Naik" and not c_naik) or (mode == "Turun" and not c_turun): 
                                 continue
                             
                             for length in [6, 5, 4, 3]:
-                                # Pastikan pencarian berada pada lajur search_pos
                                 first_val = clean_int(ws.cell(row=r_start, column=start_cols[days_indices[0]] + search_pos).value)
                                 if first_val not in current_allowed[0]:
                                     continue
@@ -155,34 +147,40 @@ if uploaded_file:
                                     for path in paths:
                                         prev_r = path[-1][0]
                                         
-                                        if mode == "Lurus":
-                                            steps = [0, 1, -1] if c_bebas else [0] 
-                                        elif mode == "Naik":
-                                            steps = [-1, -2] if c_bebas else [-1]
-                                        elif mode == "Turun":
-                                            steps = [1, 2] if c_bebas else [1]
+                                        if mode == "Lurus": step = 0
+                                        elif mode == "Naik": step = -1
+                                        elif mode == "Turun": step = 1
                                             
-                                        for step in steps:
-                                            r_target = prev_r + step
+                                        r_target = prev_r + step
+                                        
+                                        if r_target < 1 or r_target > max_scan_row:
+                                            continue
                                             
-                                            if r_target < 1 or r_target > max_scan_row:
-                                                continue
-                                                
-                                            # Tetap ikuti lajur search_pos
-                                            c_idx = start_cols[days_indices[k]] + search_pos
-                                            val = clean_int(ws.cell(row=r_target, column=c_idx).value)
-                                            
-                                            if val in current_allowed[k]:
-                                                new_paths.append(path + [(r_target, c_idx)])
+                                        c_idx = start_cols[days_indices[k]] + search_pos
+                                        val = clean_int(ws.cell(row=r_target, column=c_idx).value)
+                                        
+                                        if val in current_allowed[k]:
+                                            new_paths.append(path + [(r_target, c_idx)])
                                     paths = new_paths
                                     if not paths: break
                                 
                                 for valid_path in paths:
                                     if len(valid_path) == length:
                                         total_stats[length] += 1
-                                        for r_c, c_c in valid_path: 
-                                            if (r_c, c_c) not in cell_patterns or cell_patterns[(r_c, c_c)]["length"] < length:
-                                                cell_patterns[(r_c, c_c)] = {"length": length, "pos": target_pos}
+                                        
+                                        # FILTER HIGHLIGHT: Hanya Jalur Utama / Posisi Acuan Tunggal yang dimasukkan ke UI/Excel
+                                        should_highlight = False
+                                        if use_single_ref:
+                                            if search_pos == ref_pos_offset:
+                                                should_highlight = True
+                                        else:
+                                            if is_utama:
+                                                should_highlight = True
+                                                
+                                        if should_highlight:
+                                            for r_c, c_c in valid_path: 
+                                                if (r_c, c_c) not in cell_patterns or cell_patterns[(r_c, c_c)]["length"] < length:
+                                                    cell_patterns[(r_c, c_c)] = {"length": length, "pos": target_pos}
                                         
                                         if mode == "Lurus": r_next = r_start 
                                         elif mode == "Naik": r_next = r_start + 1 
@@ -194,13 +192,14 @@ if uploaded_file:
                                             
                                             pred_val = clean_int(ws.cell(row=r_next, column=c_next).value)
                                             if pred_val is not None:
-                                                # Prediksi ditampung ke target_pos, beserta status Utama/Pendukung
                                                 predictions_raw[target_pos].append({
                                                     "val": pred_val, 
                                                     "length": length,
                                                     "is_utama": is_utama
                                                 })
-                                                prediction_cells.add((r_next, c_next))
+                                                # Prediksi juga hanya di-highlight sesuai filter visual
+                                                if should_highlight:
+                                                    prediction_cells.add((r_next, c_next))
 
             # RULE ANGKA KUAT
             prediction_results = {}
@@ -288,7 +287,7 @@ if uploaded_file:
             c3.metric("Pola 4 Hari", f"{stats[4]} Jalur")
             c4.metric("Pola 3 Hari", f"{stats[3]} Jalur")
 
-            st.subheader("Live Preview Grid")
+            st.subheader("Live Preview Grid (Sesuai Highlight Excel)")
             highlighted = st.session_state.get("highlighted", {})
             prediction_cells = st.session_state.get("prediction_cells", set())
             
