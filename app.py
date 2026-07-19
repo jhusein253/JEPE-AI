@@ -19,15 +19,12 @@ def generate_excel(original_ws, highlighted_data):
     new_wb = openpyxl.Workbook()
     new_ws = new_wb.active
     
-    # Atur lebar kolom menjadi 3
     for col_num in range(1, original_ws.max_column + 1):
         col_letter = get_column_letter(col_num)
         new_ws.column_dimensions[col_letter].width = 3
     
-    # Warna yang sama dengan UI
     colors = {0: "3399FF", 1: "D2B48C", 2: "22C55E", 3: "FFD700"}
     
-    # Copy data dan terapkan warna
     for r in range(1, original_ws.max_row + 1):
         for c in range(1, original_ws.max_column + 1):
             cell_val = original_ws.cell(row=r, column=c).value
@@ -56,7 +53,7 @@ if uploaded_file:
         start_cols = [1, 6, 11, 16, 21, 26, 31]
 
         # 2. INPUT REFERENSI (Auto-Fetch & Live Update)
-        st.header("2. Input Referensi (Auto-Fetch & Live Update)")
+        st.header("2. Input Referensi")
         
         c_opt1, c_opt2 = st.columns(2)
         with c_opt1:
@@ -65,24 +62,21 @@ if uploaded_file:
             target_row_utama = st.number_input("Baris Target (Default: Baris Terakhir)", min_value=1, value=ws.max_row)
 
         idx_day0 = hari_tabel.index(hari_terpilih)
-
         inputs = []
         update_targets = []
-        
         cols = st.columns(6)
         
         current_r = target_row_utama
         for i in range(6):
             d_idx = (idx_day0 - i) % 7
-            
             if i > 0:
                 prev_d_idx = (idx_day0 - (i - 1)) % 7
                 if prev_d_idx == 0 and d_idx == 6:
                     current_r -= 1
             
             c_start = start_cols[d_idx]
-            
             vals = [ws.cell(row=current_r, column=c_start+j).value for j in range(4)]
+            
             if any(v is not None for v in vals):
                 auto_val = "".join([str(clean_int(v)) if clean_int(v) is not None else "0" for v in vals])
             else:
@@ -93,22 +87,27 @@ if uploaded_file:
                 inputs.append(user_val)
                 update_targets.append((current_r, c_start))
 
-        # Live Update Worksheet Memori
+        # Update Memori Internal
         for i, user_val in enumerate(inputs):
             r_target, c_start = update_targets[i]
             user_val = user_val.ljust(4, '0')[:4] 
-            
             for offset in range(4):
                 try:
                     ws.cell(row=r_target, column=c_start + offset).value = int(user_val[offset])
                 except ValueError:
                     pass
 
-        # 3. PENGATURAN
+        # 3. PENGATURAN & RULES BARU
         st.divider()
+        st.subheader("Parameter Analisa & Logika")
+        
         c_lurus = st.checkbox("Garis Lurus", value=True)
         c_naik = st.checkbox("Diagonal Naik", value=True)
         c_turun = st.checkbox("Diagonal Turun", value=True)
+        
+        # RULE 2: Menu Pencarian Bebas (Toleransi Loncat)
+        c_bebas = st.checkbox("🔥 Mode Pencarian Bebas (Toleransi Loncat 1 Kotak)", value=False, 
+                              help="Jika diaktifkan, pola tidak harus bersambung rapat. Boleh meloncati 1 baris kosong.")
         
         use_single_ref = st.checkbox("Mode Acuan Posisi Tunggal", value=False)
         ref_pos_name = st.selectbox("Posisi Acuan:", ["As", "Kop", "Kepala", "Ekor"], index=0, disabled=not use_single_ref)
@@ -122,6 +121,9 @@ if uploaded_file:
             
             predictions_raw = {0: [], 1: [], 2: [], 3: []}
             prediction_cells = set()
+            
+            # RULE 1: Baris paling bawah tidak termasuk pola historis yang dianalisa
+            max_scan_row = ws.max_row - 1 
 
             for pos_offset in range(4):
                 current_allowed = []
@@ -130,40 +132,77 @@ if uploaded_file:
                     digit = int(val_str[ref_pos_offset if use_single_ref else pos_offset])
                     current_allowed.append([digit, (digit + 5) % 10])
 
-                for r_start in range(1, ws.max_row + 1):
+                # Pencarian Pola Dinamis (Mengakomodasi "Pencarian Bebas")
+                for r_start in range(1, max_scan_row + 1):
                     for mode in ["Lurus", "Naik", "Turun"]:
-                        if (mode == "Lurus" and not c_lurus) or (mode == "Naik" and not c_naik) or (mode == "Turun" and not c_turun): continue
+                        if (mode == "Lurus" and not c_lurus) or (mode == "Naik" and not c_naik) or (mode == "Turun" and not c_turun): 
+                            continue
                         
                         for length in [6, 5, 4, 3]:
-                            path, valid = [], True
-                            for k in range(length):
-                                r_target = r_start if mode == "Lurus" else (r_start - k if mode == "Naik" else r_start + k)
-                                if r_target < 1 or r_target > ws.max_row: valid = False; break
+                            # Inisialisasi titik awal (Hari 0)
+                            first_val = clean_int(ws.cell(row=r_start, column=start_cols[days_indices[0]] + pos_offset).value)
+                            if first_val not in current_allowed[0]:
+                                continue
                                 
-                                cell_val = ws.cell(row=r_target, column=start_cols[days_indices[k]] + pos_offset).value
-                                val = clean_int(cell_val)
-                                if val not in current_allowed[k]: valid = False; break
-                                path.append((r_target, start_cols[days_indices[k]] + pos_offset))
+                            paths = [[(r_start, start_cols[days_indices[0]] + pos_offset)]]
                             
-                            if valid:
-                                total_stats[length] += 1
-                                for r_c, c_c in path: cell_patterns[(r_c, c_c)] = {"length": length, "pos": pos_offset}
-                                
-                                # Proyeksi ke hari esok
-                                r_next = r_start if mode == "Lurus" else (r_start + 1 if mode == "Naik" else r_start - 1)
-                                
-                                if 1 <= r_next <= ws.max_row:
-                                    c_next_day_idx = (idx_day0 + 1) % 7
-                                    c_next = start_cols[c_next_day_idx] + pos_offset
+                            # Eksplorasi ke belakang sesuai panjang pola yang dicari
+                            for k in range(1, length):
+                                new_paths = []
+                                for path in paths:
+                                    prev_r = path[-1][0]
                                     
-                                    pred_val = clean_int(ws.cell(row=r_next, column=c_next).value)
-                                    if pred_val is not None:
-                                        predictions_raw[pos_offset].append({"val": pred_val, "length": length})
-                                        prediction_cells.add((r_next, c_next))
+                                    # Penentuan langkah pergeseran baris
+                                    if mode == "Lurus":
+                                        # Lurus konstan. Jika bebas, boleh naik/turun 1 baris.
+                                        steps = [0, 1, -1] if c_bebas else [0] 
+                                    elif mode == "Naik":
+                                        # Naik ke masa lalu = baris berkurang. Jika bebas, bisa -1 atau -2 (loncat 1 kotak)
+                                        steps = [-1, -2] if c_bebas else [-1]
+                                    elif mode == "Turun":
+                                        # Turun ke masa lalu = baris bertambah. Jika bebas, bisa +1 atau +2
+                                        steps = [1, 2] if c_bebas else [1]
                                         
-                                break 
+                                    for step in steps:
+                                        r_target = prev_r + step
+                                        
+                                        # Pastikan tidak menyentuh/melewati baris terbawah sesuai Rule 1
+                                        if r_target < 1 or r_target > max_scan_row:
+                                            continue
+                                            
+                                        c_idx = start_cols[days_indices[k]] + pos_offset
+                                        val = clean_int(ws.cell(row=r_target, column=c_idx).value)
+                                        
+                                        if val in current_allowed[k]:
+                                            new_paths.append(path + [(r_target, c_idx)])
+                                paths = new_paths
+                                if not paths: break # Gagal membentuk pola sepanjang k
+                            
+                            # Eksekusi jika pola utuh ditemukan
+                            for valid_path in paths:
+                                if len(valid_path) == length:
+                                    total_stats[length] += 1
+                                    for r_c, c_c in valid_path: 
+                                        # Ambil yang terpanjang untuk visualisasi UI
+                                        if (r_c, c_c) not in cell_patterns or cell_patterns[(r_c, c_c)]["length"] < length:
+                                            cell_patterns[(r_c, c_c)] = {"length": length, "pos": pos_offset}
+                                    
+                                    # Proyeksi ke hari esok (Kalkulasi dari Titik Awal Hari 0)
+                                    # Jika polanya "Naik" ke masa lalu, berarti esok "Turun" (+1)
+                                    if mode == "Lurus": r_next = r_start 
+                                    elif mode == "Naik": r_next = r_start + 1 
+                                    elif mode == "Turun": r_next = r_start - 1
+                                    
+                                    if 1 <= r_next <= ws.max_row:
+                                        c_next_day_idx = (idx_day0 + 1) % 7
+                                        c_next = start_cols[c_next_day_idx] + pos_offset
+                                        
+                                        pred_val = clean_int(ws.cell(row=r_next, column=c_next).value)
+                                        if pred_val is not None:
+                                            predictions_raw[pos_offset].append({"val": pred_val, "length": length})
+                                            prediction_cells.add((r_next, c_next))
 
-            # [REVISI LOGIKA] Angka Kuat Tunggal & Cadangan Tunggal
+            # RULE 3: Angka Kuat (Panjang & Terbanyak)
             prediction_results = {}
             for p in range(4):
                 preds = predictions_raw[p]
@@ -171,14 +210,17 @@ if uploaded_file:
                 
                 max_len = max(x['length'] for x in preds)
                 all_vals = [x['val'] for x in preds]
-                all_counts = Counter(all_vals)
+                all_counts = Counter(all_vals) # Frekuensi total dari SEMUA panjang pola
                 
-                # 1. Angka Kuat (HANYA 1 ANGKA): Dari pola terpanjang, diurutkan berdasarkan frekuensi total terbanyak
+                # Kandidat angka kuat disaring dari pola dengan max_len
                 kuat_candidates = list(set([x['val'] for x in preds if x['length'] == max_len]))
+                
+                # Urutkan berdasarkan total frekuensi dukungan terbanyak
                 kuat_candidates.sort(key=lambda val: all_counts[val], reverse=True)
+                
                 angka_kuat = [kuat_candidates[0]] if kuat_candidates else []
                 
-                # 2. Angka Cadangan (HANYA 1 ANGKA): Dari sisa angka dengan frekuensi tertinggi
+                # Cadangan (Menghapus angka kuat dari counter untuk mencari runner-up)
                 for k in angka_kuat:
                     if k in all_counts:
                         del all_counts[k]
@@ -186,11 +228,14 @@ if uploaded_file:
                 top_cadangan = all_counts.most_common(1)
                 angka_cadangan = [top_cadangan[0][0]] if top_cadangan else []
                 
+                # Restore counter untuk ditampilkan utuh di UI
+                all_counts = Counter(all_vals)
+                
                 prediction_results[p] = {
                     "kuat": angka_kuat,
                     "cadangan": angka_cadangan,
                     "max_len": max_len,
-                    "all_counts": Counter(all_vals) # Simpan versi asli untuk ditampilkan di detail
+                    "all_counts": all_counts
                 }
 
             st.session_state.highlighted = cell_patterns
@@ -200,30 +245,26 @@ if uploaded_file:
             st.session_state.scanned = True
             st.rerun()
 
-        # 5. OUTPUT
+        # 5. OUTPUT UI (Tidak Ada Perubahan Signifikan pada Layout)
         if st.session_state.get("scanned"):
             st.divider()
-            
             excel_buffer = generate_excel(ws, st.session_state.get("highlighted", {}))
             st.download_button(
                 label="📥 Download Hasil Scan (.xlsx)",
                 data=excel_buffer,
-                file_name="hasil_scan_paito.xlsx",
+                file_name="hasil_scan_paito_pro.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
-            # UI Prediksi Angka Kuat & Cadangan Tunggal
-            st.subheader("🎯 Prediksi Hari Berikutnya")
+            st.subheader("🎯 Prediksi Hari Berikutnya (Rule Angka Kuat)")
             pos_names = ["As", "Kop", "Kepala", "Ekor"]
-            
             pred_cols = st.columns(4)
+            
             for p in range(4):
                 with pred_cols[p]:
                     st.markdown(f"**Posisi {pos_names[p]}**")
                     if p in st.session_state.get("prediction_results", {}):
                         res = st.session_state.prediction_results[p]
-                        
-                        # Hanya menampilkan index [0] karena list sudah pasti berisi maksimal 1 angka
                         kuat_str = str(res['kuat'][0]) if res['kuat'] else "-"
                         cadangan_str = str(res['cadangan'][0]) if res['cadangan'] else "-"
                         
@@ -232,13 +273,12 @@ if uploaded_file:
                         
                         with st.expander("Detail Frekuensi (Semua Pola)"):
                             for val, count in res['all_counts'].most_common():
-                                status = " (Kuat)" if val in res['kuat'] else (" (Cadangan Utama)" if res['cadangan'] and val == res['cadangan'][0] else "")
-                                st.write(f"Angka {val}: didukung {count} jalur{status}")
+                                status = " (Kuat)" if val in res['kuat'] else (" (Cadangan)" if res['cadangan'] and val == res['cadangan'][0] else "")
+                                st.write(f"Angka {val}: didukung {count} pola{status}")
                     else:
                         st.write("Belum ada pola")
             
             st.divider()
-            
             st.subheader("Statistik Jalur Pola")
             stats = st.session_state.stats
             c1, c2, c3, c4 = st.columns(4)
@@ -252,17 +292,13 @@ if uploaded_file:
             prediction_cells = st.session_state.get("prediction_cells", set())
             
             html = ["<div style='overflow-x: auto;'><table style='border-collapse: collapse; width: 100%; text-align: center; font-family: monospace; font-size: 12px;'>"]
-            
-            # Header
             html.append("<tr style='background-color: #0f172a; color: white;'><th>Line</th>")
-            for h in hari_tabel:
-                html.append(f"<th colspan='4'>{h}</th><th style='width: 15px;'></th>") 
+            
+            for h in hari_tabel: html.append(f"<th colspan='4'>{h}</th><th style='width: 15px;'></th>") 
             html.append("</tr>")
             
-            # Data Rows
             for r in range(max(1, ws.max_row - 30), ws.max_row + 1):
-                html.append(f"<tr><td style='border: 1px solid #ccc; background-color: #f0f0f0; width: 25px; height: 25px; text-align: center; font-weight: bold;'>{r}</td>")
-                
+                html.append(f"<tr><td style='border: 1px solid #ccc; background-color: #f0f0f0; width: 25px; height: 25px; font-weight: bold;'>{r}</td>")
                 for i, start_col in enumerate(start_cols):
                     for offset in range(4):
                         c_idx = start_col + offset
@@ -276,16 +312,12 @@ if uploaded_file:
                             p = highlighted[(r, c_idx)]["pos"]
                             colors = {0: "#3399FF", 1: "#D2B48C", 2: "#22C55E", 3: "#FFD700"}
                             bg = colors.get(p, "#ffffff")
-                        elif is_pred:
-                            bg = "#fee2e2" 
+                        elif is_pred: bg = "#fee2e2" 
                         
                         border_style = "2px solid #dc2626" if is_pred else "1px solid #ccc"
                         text_color = "#dc2626" if is_pred else "inherit"
-                        
                         html.append(f"<td style='border: {border_style}; background-color: {bg}; color: {text_color}; font-weight: bold; width: 25px; height: 25px;'>{display_val}</td>")
-                    
                     html.append("<td style='width: 15px;'></td>")
-                    
                 html.append("</tr>")
             html.append("</table></div>")
             st.markdown("".join(html), unsafe_allow_html=True)
