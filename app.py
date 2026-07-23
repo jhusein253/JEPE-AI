@@ -123,6 +123,9 @@ if uploaded_file:
             predictions_raw = {0: [], 1: [], 2: [], 3: []}
             prediction_cells = set()
 
+            # Mengecualikan baris paling bawah (hari prediksi) dari proses pindaian
+            batas_bawah = ws.max_row 
+
             for pos_offset in range(4):
                 current_allowed = []
                 for k in range(6):
@@ -130,7 +133,8 @@ if uploaded_file:
                     digit = int(val_str[ref_pos_offset if use_single_ref else pos_offset])
                     current_allowed.append([digit, (digit + 5) % 10])
 
-                for r_start in range(1, ws.max_row + 1):
+                # Looping dibatasi sampai sebelum baris terakhir
+                for r_start in range(1, batas_bawah):
                     for mode in ["Lurus", "Naik", "Turun"]:
                         if (mode == "Lurus" and not c_lurus) or (mode == "Naik" and not c_naik) or (mode == "Turun" and not c_turun): continue
                         
@@ -138,7 +142,10 @@ if uploaded_file:
                             path, valid = [], True
                             for k in range(length):
                                 r_target = r_start if mode == "Lurus" else (r_start - k if mode == "Naik" else r_start + k)
-                                if r_target < 1 or r_target > ws.max_row: valid = False; break
+                                
+                                # Batalkan jika lintasan pola menyentuh atau melewati baris terakhir
+                                if r_target < 1 or r_target >= batas_bawah: 
+                                    valid = False; break
                                 
                                 cell_val = ws.cell(row=r_target, column=start_cols[days_indices[k]] + pos_offset).value
                                 val = clean_int(cell_val)
@@ -149,10 +156,10 @@ if uploaded_file:
                                 total_stats[length] += 1
                                 for r_c, c_c in path: cell_patterns[(r_c, c_c)] = {"length": length, "pos": pos_offset}
                                 
-                                # Proyeksi ke hari esok
+                                # Proyeksi ke hari esok, pastikan hanya mengambil histori sebelum batas_bawah
                                 r_next = r_start if mode == "Lurus" else (r_start + 1 if mode == "Naik" else r_start - 1)
                                 
-                                if 1 <= r_next <= ws.max_row:
+                                if 1 <= r_next < batas_bawah:
                                     c_next_day_idx = (idx_day0 + 1) % 7
                                     c_next = start_cols[c_next_day_idx] + pos_offset
                                     
@@ -163,7 +170,7 @@ if uploaded_file:
                                         
                                 break 
 
-            # [REVISI LOGIKA] Angka Kuat Tunggal & Cadangan Tunggal
+            # Logika Angka Kuat & Cadangan Tunggal Baru
             prediction_results = {}
             for p in range(4):
                 preds = predictions_raw[p]
