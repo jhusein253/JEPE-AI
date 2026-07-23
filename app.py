@@ -117,7 +117,8 @@ if uploaded_file:
         # 4. LOGIKA SCANNING
         if st.button("JALANKAN ANALISA"):
             cell_patterns = {}
-            total_stats = {6: 0, 5: 0, 4: 0, 3: 0}
+            # [REVISI] Menambahkan stat untuk pola 2 hari
+            total_stats = {6: 0, 5: 0, 4: 0, 3: 0, 2: 0}
             days_indices = [(idx_day0 - k) % 7 for k in range(6)]
             
             predictions_raw = {0: [], 1: [], 2: [], 3: []}
@@ -138,7 +139,8 @@ if uploaded_file:
                     for mode in ["Lurus", "Naik", "Turun"]:
                         if (mode == "Lurus" and not c_lurus) or (mode == "Naik" and not c_naik) or (mode == "Turun" and not c_turun): continue
                         
-                        for length in [6, 5, 4, 3]:
+                        # [REVISI] Menambahkan panjang 2 ke dalam loop pencarian
+                        for length in [6, 5, 4, 3, 2]:
                             path, valid = [], True
                             for k in range(length):
                                 r_target = r_start if mode == "Lurus" else (r_start - k if mode == "Naik" else r_start + k)
@@ -187,7 +189,7 @@ if uploaded_file:
                     
                     angka_stats[v]['total'] += 1
                     
-                    # Identifikasi apakah dari pola panjang (>=4) atau pendek (3)
+                    # Identifikasi apakah dari pola panjang (>=4) atau pendek (3 dan 2)
                     if l >= 4:
                         angka_stats[v]['long_count'] += 1
                     else:
@@ -283,11 +285,13 @@ if uploaded_file:
             
             st.subheader("Statistik Jalur Pola")
             stats = st.session_state.stats
-            c1, c2, c3, c4 = st.columns(4)
+            # [REVISI] Mengubah kolom menjadi 5 untuk menampung stat 2 hari
+            c1, c2, c3, c4, c5 = st.columns(5)
             c1.metric("Pola 6 Hari", f"{stats[6]} Jalur")
             c2.metric("Pola 5 Hari", f"{stats[5]} Jalur")
             c3.metric("Pola 4 Hari", f"{stats[4]} Jalur")
             c4.metric("Pola 3 Hari", f"{stats[3]} Jalur")
+            c5.metric("Pola 2 Hari", f"{stats[2]} Jalur")
 
             st.subheader("Live Preview Grid")
             highlighted = st.session_state.get("highlighted", {})
