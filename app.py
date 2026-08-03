@@ -145,13 +145,19 @@ if uploaded_file:
 
         idx_day0 = hari_tabel.index(hari_terpilih)
 
+        # Cek status Mode Track untuk menentukan jumlah hari referensi yang diambil (10 hari vs 6 hari)
+        is_mode_track = st.session_state.get("c_track_key", False)
+        num_days = 10 if is_mode_track else 6
+
         inputs = []
         update_targets = []
         
-        cols = st.columns(6)
+        # Grid input responsif (5 kolom x 2 baris jika 10 hari)
+        cols_per_row = 5 if is_mode_track else 6
+        cols = st.columns(cols_per_row)
         
         current_r = target_row_utama
-        for i in range(6):
+        for i in range(num_days):
             d_idx = (idx_day0 - i) % 7
             
             if i > 0:
@@ -167,8 +173,9 @@ if uploaded_file:
             else:
                 auto_val = "0000"
                 
-            with cols[i]:
-                user_val = st.text_input(f"{hari_tabel[d_idx].upper()} (-{i}):", value=auto_val, max_chars=4)
+            col_target = cols[i % cols_per_row]
+            with col_target:
+                user_val = st.text_input(f"{hari_tabel[d_idx].upper()} (-{i}):", value=auto_val, max_chars=4, key=f"input_ref_{i}")
                 inputs.append(user_val)
                 update_targets.append((current_r, c_start))
 
@@ -183,6 +190,7 @@ if uploaded_file:
                     pass
 
         st.divider()
+        st.subheader("3. PENGATURAN SCANNER")
         c_lurus = st.checkbox("GARIS LURUS", value=True)
         c_naik = st.checkbox("DIAGONAL NAIK", value=True)
         c_turun = st.checkbox("DIAGONAL TURUN", value=True)
@@ -191,45 +199,78 @@ if uploaded_file:
         ref_pos_name = st.selectbox("POSISI ACUAN:", ["As", "Kop", "Kepala", "Ekor"], index=0, disabled=not use_single_ref)
         ref_pos_offset = ["As", "Kop", "Kepala", "Ekor"].index(ref_pos_name)
 
+        # [REVISI] Pilihan Mode Track di bawah Mode Acuan Posisi Tunggal
+        c_track = st.checkbox("MODE TRACK (PANJANG 10 HARI & GANTI SEASON)", value=False, key="c_track_key")
+
         # 4. LOGIKA SCANNING
         if st.button("EXECUTE ANALYSIS // JALANKAN"):
             cell_patterns = {}
-            total_stats = {6: 0, 5: 0, 4: 0, 3: 0}
-            days_indices = [(idx_day0 - k) % 7 for k in range(6)]
+            
+            # Tentukan rentang panjang pola berdasarkan Mode Track
+            lengths_to_scan = list(range(num_days, 2, -1))  # [10..3] jika Mode Track, [6..3] jika Normal
+            total_stats = {l: 0 for l in lengths_to_scan}
+            days_indices = [(idx_day0 - k) % 7 for k in range(num_days)]
             
             predictions_raw = {0: [], 1: [], 2: [], 3: []}
             prediction_cells = set()
 
-            # [REVISI] Dinamisasi Batas Bawah Scan
-            # Cari tahu baris berapa saja yang dipakai sebagai input referensi
+            # Dinamisasi Batas Bawah Scan agar referensi tidak men-scan dirinya sendiri
             ref_rows = [r for r, c in update_targets]
-            batas_bawah_scan = min(ref_rows) # Batas ini secara ketat mencegah referensi men-scan dirinya sendiri
+            batas_bawah_scan = min(ref_rows)
 
             for pos_offset in range(4):
                 current_allowed = []
-                for k in range(6):
+                for k in range(num_days):
                     val_str = inputs[k]
                     digit = int(val_str[ref_pos_offset if use_single_ref else pos_offset])
                     current_allowed.append([digit, (digit + 5) % 10])
 
-                # Scan hanya boleh mencari histori sampai sebelum baris referensi (batas_bawah_scan)
                 for r_start in range(1, batas_bawah_scan):
                     for mode in ["Lurus", "Naik", "Turun"]:
                         if (mode == "Lurus" and not c_lurus) or (mode == "Naik" and not c_naik) or (mode == "Turun" and not c_turun): continue
                         
-                        for length in [6, 5, 4, 3]:
-                            path, valid = [], True
+                        for length in lengths_to_scan:
+                            path = []
+                            valid = True
+                            r_curr = r_start
+                            
                             for k in range(length):
-                                r_target = r_start if mode == "Lurus" else (r_start - k if mode == "Naik" else r_start + k)
+                                step_dir = 0 if mode == "Lurus" else (-1 if mode == "Naik" else 1)
+                                r_expected = r_start if k == 0 else (r_curr + step_dir)
+                                c_target = start_cols[days_indices[k]] + pos_offset
                                 
-                                # Batalkan lintasan pola jika menyentuh baris yang dijadikan referensi
-                                if r_target < 1 or r_target >= batas_bawah_scan: 
-                                    valid = False; break
+                                cell_is_match = False
+                                if 1 <= r_expected < batas_bawah_scan:
+                                    val = clean_int(ws.cell(row=r_expected, column=c_target).value)
+                                    if val in current_allowed[k]:
+                                        cell_is_match = True
                                 
-                                cell_val = ws.cell(row=r_target, column=start_cols[days_indices[k]] + pos_offset).value
-                                val = clean_int(cell_val)
-                                if val not in current_allowed[k]: valid = False; break
-                                path.append((r_target, start_cols[days_indices[k]] + pos_offset))
+                                if cell_is_match:
+                                    r_curr = r_expected
+                                    path.append((r_curr, c_target))
+                                else:
+                                    # Logic Ganti Season pada Mode Track (Jarak Maksimal 15 Kotak)
+                                    if c_track:
+                                        found_jump = False
+                                        for delta in range(1, 16):  # Mencari ke bawah dan ke atas hingga 15 kotak
+                                            for sign in [1, -1]:
+                                                r_alt = r_curr + (sign * delta)
+                                                if 1 <= r_alt < batas_bawah_scan and abs(r_alt - r_start) <= 15:
+                                                    val_alt = clean_int(ws.cell(row=r_alt, column=c_target).value)
+                                                    if val_alt in current_allowed[k]:
+                                                        r_curr = r_alt
+                                                        path.append((r_curr, c_target))
+                                                        found_jump = True
+                                                        break
+                                            if found_jump:
+                                                break
+                                        
+                                        if not found_jump:
+                                            valid = False
+                                            break
+                                    else:
+                                        valid = False
+                                        break
                             
                             if valid:
                                 total_stats[length] += 1
@@ -237,7 +278,6 @@ if uploaded_file:
                                 
                                 r_next = r_start if mode == "Lurus" else (r_start + 1 if mode == "Naik" else r_start - 1)
                                 
-                                # Proyeksi (hari prediksi) tetap diperbolehkan meskipun jatuh di area baris referensi
                                 if 1 <= r_next <= ws.max_row:
                                     c_next_day_idx = (idx_day0 + 1) % 7
                                     c_next = start_cols[c_next_day_idx] + pos_offset
@@ -375,11 +415,9 @@ if uploaded_file:
             
             st.subheader("SYSTEM STATS // POLA JALUR")
             stats = st.session_state.stats
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("6 HARI", f"{stats[6]} PATHS")
-            c2.metric("5 HARI", f"{stats[5]} PATHS")
-            c3.metric("4 HARI", f"{stats[4]} PATHS")
-            c4.metric("3 HARI", f"{stats[3]} PATHS")
+            stat_cols = st.columns(len(stats))
+            for col, (l_val, count) in zip(stat_cols, stats.items()):
+                col.metric(f"{l_val} HARI", f"{count} PATHS")
 
             st.subheader("NEON GRID // LIVE PREVIEW")
             highlighted = st.session_state.get("highlighted", {})
@@ -411,7 +449,6 @@ if uploaded_file:
                         
                         if (r, c_idx) in highlighted:
                             p = highlighted[(r, c_idx)]["pos"]
-                            # Warna Neon Cyberpunk
                             colors = {0: "#00ffff", 1: "#ff007f", 2: "#39ff14", 3: "#fcee0a"}
                             bg = colors.get(p, "#0b0c10")
                             text_color = "#000000"
