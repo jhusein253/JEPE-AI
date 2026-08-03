@@ -96,6 +96,15 @@ def clean_int(v):
     try: return int(float(str(v).strip()))
     except (ValueError, TypeError): return None
 
+# Fungsi mencari baris terakhir yang benar-benar terisi data
+def get_actual_max_row(ws):
+    for r in range(ws.max_row, 0, -1):
+        for c in range(1, ws.max_column + 1):
+            val = ws.cell(row=r, column=c).value
+            if val is not None and str(val).strip() != "":
+                return r
+    return 1
+
 # Fungsi generate_excel dengan warna neon cyberpunk
 def generate_excel(original_ws, highlighted_data):
     new_wb = openpyxl.Workbook()
@@ -105,7 +114,6 @@ def generate_excel(original_ws, highlighted_data):
         col_letter = get_column_letter(col_num)
         new_ws.column_dimensions[col_letter].width = 3
     
-    # Palet Excel Cyberpunk
     colors = {0: "00FFFF", 1: "FF007F", 2: "39FF14", 3: "FCEE0A"}
     
     for r in range(1, original_ws.max_row + 1):
@@ -132,6 +140,8 @@ if uploaded_file:
         wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
         ws = wb.active
         
+        actual_max_row = get_actual_max_row(ws)
+        
         hari_tabel = ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
         start_cols = [1, 6, 11, 16, 21, 26, 31]
 
@@ -139,20 +149,18 @@ if uploaded_file:
         
         c_opt1, c_opt2 = st.columns(2)
         with c_opt1:
-            hari_terpilih = st.selectbox("HARI UTAMA (HARI INI):", hari_tabel, index=4)
+            hari_terpilih = st.selectbox("HARI UTAMA (HARI INI):", hari_tabel, index=1) # Default Minggu
         with c_opt2:
-            target_row_utama = st.number_input("BARIS TARGET (DEFAULT: TERAKHIR)", min_value=1, value=ws.max_row)
+            target_row_utama = st.number_input("BARIS TARGET (DEFAULT: TERISI TERAKHIR)", min_value=1, value=actual_max_row)
 
         idx_day0 = hari_tabel.index(hari_terpilih)
 
-        # Cek status Mode Track untuk menentukan jumlah hari referensi yang diambil (10 hari vs 6 hari)
         is_mode_track = st.session_state.get("c_track_key", False)
         num_days = 10 if is_mode_track else 6
 
         inputs = []
         update_targets = []
         
-        # Grid input responsif (5 kolom x 2 baris jika 10 hari)
         cols_per_row = 5 if is_mode_track else 6
         cols = st.columns(cols_per_row)
         
@@ -160,6 +168,8 @@ if uploaded_file:
         for i in range(num_days):
             d_idx = (idx_day0 - i) % 7
             
+            # [PERBAIKAN LOGIKA PINDAH BARIS]
+            # Pergantian baris (turun 1 baris ke atas) HANYA terjadi dari Sabtu (index 0) mundur ke Jumat (index 6)
             if i > 0:
                 prev_d_idx = (idx_day0 - (i - 1)) % 7
                 if prev_d_idx == 0 and d_idx == 6:
@@ -199,22 +209,19 @@ if uploaded_file:
         ref_pos_name = st.selectbox("POSISI ACUAN:", ["As", "Kop", "Kepala", "Ekor"], index=0, disabled=not use_single_ref)
         ref_pos_offset = ["As", "Kop", "Kepala", "Ekor"].index(ref_pos_name)
 
-        # [REVISI] Pilihan Mode Track di bawah Mode Acuan Posisi Tunggal
         c_track = st.checkbox("MODE TRACK (PANJANG 10 HARI & GANTI SEASON)", value=False, key="c_track_key")
 
         # 4. LOGIKA SCANNING
         if st.button("EXECUTE ANALYSIS // JALANKAN"):
             cell_patterns = {}
             
-            # Tentukan rentang panjang pola berdasarkan Mode Track
-            lengths_to_scan = list(range(num_days, 2, -1))  # [10..3] jika Mode Track, [6..3] jika Normal
+            lengths_to_scan = list(range(num_days, 2, -1))
             total_stats = {l: 0 for l in lengths_to_scan}
             days_indices = [(idx_day0 - k) % 7 for k in range(num_days)]
             
             predictions_raw = {0: [], 1: [], 2: [], 3: []}
             prediction_cells = set()
 
-            # Dinamisasi Batas Bawah Scan agar referensi tidak men-scan dirinya sendiri
             ref_rows = [r for r, c in update_targets]
             batas_bawah_scan = min(ref_rows)
 
@@ -249,10 +256,9 @@ if uploaded_file:
                                     r_curr = r_expected
                                     path.append((r_curr, c_target))
                                 else:
-                                    # Logic Ganti Season pada Mode Track (Jarak Maksimal 15 Kotak)
                                     if c_track:
                                         found_jump = False
-                                        for delta in range(1, 16):  # Mencari ke bawah dan ke atas hingga 15 kotak
+                                        for delta in range(1, 16):
                                             for sign in [1, -1]:
                                                 r_alt = r_curr + (sign * delta)
                                                 if 1 <= r_alt < batas_bawah_scan and abs(r_alt - r_start) <= 15:
@@ -425,13 +431,11 @@ if uploaded_file:
             
             html = ["<div style='overflow-x: auto; box-shadow: 0 0 10px #00ffcc; padding: 10px; background-color: #0b0c10;'><table style='border-collapse: collapse; width: 100%; text-align: center; font-family: Courier New, monospace; font-size: 13px;'>"]
             
-            # Header Cyberpunk
             html.append("<tr style='background-color: #1f2833; color: #ff007f; text-shadow: 0 0 3px #ff007f;'><th>LINE</th>")
             for h in hari_tabel:
                 html.append(f"<th colspan='4' style='border: 1px solid #00ffcc;'>{h.upper()}</th><th style='width: 15px;'></th>") 
             html.append("</tr>")
             
-            # Data Rows Cyberpunk
             for r in range(max(1, ws.max_row - 30), ws.max_row + 1):
                 html.append(f"<tr><td style='border: 1px solid #333; background-color: #1a1a1a; color: #00ffcc; width: 25px; height: 25px; text-align: center;'>{r}</td>")
                 
