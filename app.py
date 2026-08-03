@@ -200,7 +200,10 @@ if uploaded_file:
             predictions_raw = {0: [], 1: [], 2: [], 3: []}
             prediction_cells = set()
 
-            batas_bawah = ws.max_row 
+            # [REVISI] Dinamisasi Batas Bawah Scan
+            # Cari tahu baris berapa saja yang dipakai sebagai input referensi
+            ref_rows = [r for r, c in update_targets]
+            batas_bawah_scan = min(ref_rows) # Batas ini secara ketat mencegah referensi men-scan dirinya sendiri
 
             for pos_offset in range(4):
                 current_allowed = []
@@ -209,7 +212,8 @@ if uploaded_file:
                     digit = int(val_str[ref_pos_offset if use_single_ref else pos_offset])
                     current_allowed.append([digit, (digit + 5) % 10])
 
-                for r_start in range(1, batas_bawah):
+                # Scan hanya boleh mencari histori sampai sebelum baris referensi (batas_bawah_scan)
+                for r_start in range(1, batas_bawah_scan):
                     for mode in ["Lurus", "Naik", "Turun"]:
                         if (mode == "Lurus" and not c_lurus) or (mode == "Naik" and not c_naik) or (mode == "Turun" and not c_turun): continue
                         
@@ -218,7 +222,8 @@ if uploaded_file:
                             for k in range(length):
                                 r_target = r_start if mode == "Lurus" else (r_start - k if mode == "Naik" else r_start + k)
                                 
-                                if r_target < 1 or r_target >= batas_bawah: 
+                                # Batalkan lintasan pola jika menyentuh baris yang dijadikan referensi
+                                if r_target < 1 or r_target >= batas_bawah_scan: 
                                     valid = False; break
                                 
                                 cell_val = ws.cell(row=r_target, column=start_cols[days_indices[k]] + pos_offset).value
@@ -232,7 +237,8 @@ if uploaded_file:
                                 
                                 r_next = r_start if mode == "Lurus" else (r_start + 1 if mode == "Naik" else r_start - 1)
                                 
-                                if 1 <= r_next < batas_bawah:
+                                # Proyeksi (hari prediksi) tetap diperbolehkan meskipun jatuh di area baris referensi
+                                if 1 <= r_next <= ws.max_row:
                                     c_next_day_idx = (idx_day0 + 1) % 7
                                     c_next = start_cols[c_next_day_idx] + pos_offset
                                     
