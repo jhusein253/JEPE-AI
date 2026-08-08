@@ -11,10 +11,8 @@ st.title("JEPE AI - Advanced Scanner")
 
 # Fungsi pembersih data
 def clean_int(v):
-    try: 
-        return int(float(str(v).strip()))
-    except (ValueError, TypeError): 
-        return None
+    try: return int(float(str(v).strip()))
+    except (ValueError, TypeError): return None
 
 # Fungsi generate_excel dengan lebar kolom 3
 def generate_excel(original_ws, highlighted_data):
@@ -112,6 +110,9 @@ if uploaded_file:
         c_naik = st.checkbox("Diagonal Naik", value=True)
         c_turun = st.checkbox("Diagonal Turun", value=True)
         
+        # Opsi baru untuk menghitung Angka Terdekat
+        c_terdekat = st.checkbox("Toleransi Angka Terdekat (+/- 1 dari Angka & Indeks)", value=True)
+        
         use_single_ref = st.checkbox("Mode Acuan Posisi Tunggal", value=False)
         ref_pos_name = st.selectbox("Posisi Acuan:", ["As", "Kop", "Kepala", "Ekor"], index=0, disabled=not use_single_ref)
         ref_pos_offset = ["As", "Kop", "Kepala", "Ekor"].index(ref_pos_name)
@@ -119,7 +120,7 @@ if uploaded_file:
         # 4. LOGIKA SCANNING
         if st.button("JALANKAN ANALISA"):
             cell_patterns = {}
-            # [REVISI] Hanya menampung panjang pola 6, 5, 4, 3
+            # [REVISI] Mengubah stat untuk pola min 3 hari
             total_stats = {6: 0, 5: 0, 4: 0, 3: 0}
             days_indices = [(idx_day0 - k) % 7 for k in range(6)]
             
@@ -133,14 +134,27 @@ if uploaded_file:
                 for k in range(6):
                     val_str = inputs[k]
                     digit = int(val_str[ref_pos_offset if use_single_ref else pos_offset])
-                    current_allowed.append([digit, (digit + 5) % 10])
+                    indek = (digit + 5) % 10
+                    
+                    if c_terdekat:
+                        # Masukkan angka inti, indeks, dan angka-angka terdekatnya
+                        allowed = {
+                            digit, 
+                            indek,
+                            (digit - 1) % 10,
+                            (digit + 1) % 10,
+                            (indek - 1) % 10,
+                            (indek + 1) % 10
+                        }
+                        current_allowed.append(list(allowed))
+                    else:
+                        current_allowed.append([digit, indek])
 
                 for r_start in range(1, batas_bawah):
                     for mode in ["Lurus", "Naik", "Turun"]:
-                        if (mode == "Lurus" and not c_lurus) or (mode == "Naik" and not c_naik) or (mode == "Turun" and not c_turun): 
-                            continue
+                        if (mode == "Lurus" and not c_lurus) or (mode == "Naik" and not c_naik) or (mode == "Turun" and not c_turun): continue
                         
-                        # [REVISI] Hapus iterasi untuk length 2, minimal sekarang 3 hari
+                        # [REVISI] Pencarian dibatasi minimal 3 hari
                         for length in [6, 5, 4, 3]:
                             path, valid = [], True
                             for k in range(length):
@@ -151,14 +165,12 @@ if uploaded_file:
                                 
                                 cell_val = ws.cell(row=r_target, column=start_cols[days_indices[k]] + pos_offset).value
                                 val = clean_int(cell_val)
-                                if val not in current_allowed[k]: 
-                                    valid = False; break
+                                if val not in current_allowed[k]: valid = False; break
                                 path.append((r_target, start_cols[days_indices[k]] + pos_offset))
                             
                             if valid:
                                 total_stats[length] += 1
-                                for r_c, c_c in path: 
-                                    cell_patterns[(r_c, c_c)] = {"length": length, "pos": pos_offset}
+                                for r_c, c_c in path: cell_patterns[(r_c, c_c)] = {"length": length, "pos": pos_offset}
                                 
                                 r_next = r_start if mode == "Lurus" else (r_start + 1 if mode == "Naik" else r_start - 1)
                                 
@@ -170,7 +182,7 @@ if uploaded_file:
                                     if pred_val is not None:
                                         predictions_raw[pos_offset].append({"val": pred_val, "length": length})
                                         prediction_cells.add((r_next, c_next))
-                                
+                                        
                                 break 
 
             prediction_results = {}
@@ -273,12 +285,12 @@ if uploaded_file:
             
             st.subheader("Statistik Jalur Pola")
             stats = st.session_state.stats
-            # [REVISI] Mengurangi jumlah kolom menjadi 4 dan menghapus metrik 2 hari
+            # [REVISI] Mengubah kolom menjadi 4 (karena min 3 hari)
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Pola 6 Hari", f"{stats.get(6, 0)} Jalur")
-            c2.metric("Pola 5 Hari", f"{stats.get(5, 0)} Jalur")
-            c3.metric("Pola 4 Hari", f"{stats.get(4, 0)} Jalur")
-            c4.metric("Pola 3 Hari", f"{stats.get(3, 0)} Jalur")
+            c1.metric("Pola 6 Hari", f"{stats[6]} Jalur")
+            c2.metric("Pola 5 Hari", f"{stats[5]} Jalur")
+            c3.metric("Pola 4 Hari", f"{stats[4]} Jalur")
+            c4.metric("Pola 3 Hari", f"{stats[3]} Jalur")
 
             st.subheader("Live Preview Grid")
             highlighted = st.session_state.get("highlighted", {})
