@@ -11,8 +11,10 @@ st.title("JEPE AI - Advanced Scanner")
 
 # Fungsi pembersih data
 def clean_int(v):
-    try: return int(float(str(v).strip()))
-    except (ValueError, TypeError): return None
+    try: 
+        return int(float(str(v).strip()))
+    except (ValueError, TypeError): 
+        return None
 
 # Fungsi generate_excel dengan lebar kolom 3
 def generate_excel(original_ws, highlighted_data):
@@ -117,14 +119,12 @@ if uploaded_file:
         # 4. LOGIKA SCANNING
         if st.button("JALANKAN ANALISA"):
             cell_patterns = {}
-            # [REVISI] Menambahkan stat untuk pola 2 hari
             total_stats = {6: 0, 5: 0, 4: 0, 3: 0, 2: 0}
             days_indices = [(idx_day0 - k) % 7 for k in range(6)]
             
             predictions_raw = {0: [], 1: [], 2: [], 3: []}
             prediction_cells = set()
 
-            # Mengecualikan baris paling bawah (hari prediksi) dari proses pindaian
             batas_bawah = ws.max_row 
 
             for pos_offset in range(4):
@@ -132,33 +132,33 @@ if uploaded_file:
                 for k in range(6):
                     val_str = inputs[k]
                     digit = int(val_str[ref_pos_offset if use_single_ref else pos_offset])
+                    # Mengizinkan angka aktual dan indeksnya (+5 % 10)
                     current_allowed.append([digit, (digit + 5) % 10])
 
-                # Looping dibatasi sampai sebelum baris terakhir
                 for r_start in range(1, batas_bawah):
                     for mode in ["Lurus", "Naik", "Turun"]:
-                        if (mode == "Lurus" and not c_lurus) or (mode == "Naik" and not c_naik) or (mode == "Turun" and not c_turun): continue
+                        if (mode == "Lurus" and not c_lurus) or (mode == "Naik" and not c_naik) or (mode == "Turun" and not c_turun): 
+                            continue
                         
-                        # [REVISI] Menambahkan panjang 2 ke dalam loop pencarian
                         for length in [6, 5, 4, 3, 2]:
                             path, valid = [], True
                             for k in range(length):
                                 r_target = r_start if mode == "Lurus" else (r_start - k if mode == "Naik" else r_start + k)
                                 
-                                # Batalkan jika lintasan pola menyentuh atau melewati baris terakhir
                                 if r_target < 1 or r_target >= batas_bawah: 
                                     valid = False; break
                                 
                                 cell_val = ws.cell(row=r_target, column=start_cols[days_indices[k]] + pos_offset).value
                                 val = clean_int(cell_val)
-                                if val not in current_allowed[k]: valid = False; break
+                                if val not in current_allowed[k]: 
+                                    valid = False; break
                                 path.append((r_target, start_cols[days_indices[k]] + pos_offset))
                             
                             if valid:
                                 total_stats[length] += 1
-                                for r_c, c_c in path: cell_patterns[(r_c, c_c)] = {"length": length, "pos": pos_offset}
+                                for r_c, c_c in path: 
+                                    cell_patterns[(r_c, c_c)] = {"length": length, "pos": pos_offset}
                                 
-                                # Proyeksi ke hari esok, pastikan hanya mengambil histori sebelum batas_bawah
                                 r_next = r_start if mode == "Lurus" else (r_start + 1 if mode == "Naik" else r_start - 1)
                                 
                                 if 1 <= r_next < batas_bawah:
@@ -169,16 +169,14 @@ if uploaded_file:
                                     if pred_val is not None:
                                         predictions_raw[pos_offset].append({"val": pred_val, "length": length})
                                         prediction_cells.add((r_next, c_next))
-                                        
+                                
                                 break 
 
-            # Logika Angka Kuat & Cadangan Tunggal Baru
             prediction_results = {}
             for p in range(4):
                 preds = predictions_raw[p]
                 if not preds: continue
                 
-                # 1. Mengumpulkan statistik dukungan untuk setiap angka yang diprediksi
                 angka_stats = {}
                 for x in preds:
                     v = x['val']
@@ -189,13 +187,11 @@ if uploaded_file:
                     
                     angka_stats[v]['total'] += 1
                     
-                    # Identifikasi apakah dari pola panjang (>=4) atau pendek (3 dan 2)
                     if l >= 4:
                         angka_stats[v]['long_count'] += 1
                     else:
                         angka_stats[v]['short_count'] += 1
                         
-                    # Simpan panjang baris maksimal untuk angka ini
                     if l > angka_stats[v]['max_len']:
                         angka_stats[v]['max_len'] = l
 
@@ -203,25 +199,17 @@ if uploaded_file:
                 cadangan_candidates = []
                 all_vals = [x['val'] for x in preds]
                 
-                # 2. Menyaring angka berdasarkan Syarat Kuat:
-                # - Ditunjuk oleh pola panjang (4-6 hari), ATAU
-                # - Ditunjuk oleh pola pendek yang ditunjang pola panjang, ATAU
-                # - Ditunjuk oleh pola pendek yang menghasilkan arah/angka sama (frekuensi > 1)
                 for v, stats in angka_stats.items():
                     if stats['long_count'] > 0 or stats['short_count'] > 1:
                         kuat_candidates.append(v)
                     else:
                         cadangan_candidates.append(v)
                 
-                # 3. Mengurutkan pemenang berdasarkan frekuensi total terbanyak, lalu panjang pola
                 kuat_candidates.sort(key=lambda x: (angka_stats[x]['total'], angka_stats[x]['max_len']), reverse=True)
                 cadangan_candidates.sort(key=lambda x: (angka_stats[x]['total'], angka_stats[x]['max_len']), reverse=True)
                 
                 angka_kuat = [kuat_candidates[0]] if kuat_candidates else []
                 
-                # 4. Penentuan Angka Cadangan:
-                # Prioritas 1: Runner-up dari kandidat kuat (jika ada > 1 kandidat kuat)
-                # Prioritas 2: Angka dari cadangan murni
                 angka_cadangan = []
                 if len(kuat_candidates) > 1:
                     angka_cadangan = [kuat_candidates[1]]
@@ -256,7 +244,6 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
-            # UI Prediksi Angka Kuat & Cadangan Tunggal
             st.subheader("🎯 Prediksi Hari Berikutnya")
             pos_names = ["As", "Kop", "Kepala", "Ekor"]
             
@@ -285,7 +272,6 @@ if uploaded_file:
             
             st.subheader("Statistik Jalur Pola")
             stats = st.session_state.stats
-            # [REVISI] Mengubah kolom menjadi 5 untuk menampung stat 2 hari
             c1, c2, c3, c4, c5 = st.columns(5)
             c1.metric("Pola 6 Hari", f"{stats[6]} Jalur")
             c2.metric("Pola 5 Hari", f"{stats[5]} Jalur")
