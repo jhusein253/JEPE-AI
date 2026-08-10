@@ -120,7 +120,6 @@ if uploaded_file:
         # 4. LOGIKA SCANNING
         if st.button("JALANKAN ANALISA"):
             cell_patterns = {}
-            # [REVISI] Mengubah stat untuk pola min 3 hari
             total_stats = {6: 0, 5: 0, 4: 0, 3: 0}
             days_indices = [(idx_day0 - k) % 7 for k in range(6)]
             
@@ -137,7 +136,6 @@ if uploaded_file:
                     indek = (digit + 5) % 10
                     
                     if c_terdekat:
-                        # Masukkan angka inti, indeks, dan angka-angka terdekatnya
                         allowed = {
                             digit, 
                             indek,
@@ -154,7 +152,6 @@ if uploaded_file:
                     for mode in ["Lurus", "Naik", "Turun"]:
                         if (mode == "Lurus" and not c_lurus) or (mode == "Naik" and not c_naik) or (mode == "Turun" and not c_turun): continue
                         
-                        # [REVISI] Pencarian dibatasi minimal 3 hari
                         for length in [6, 5, 4, 3]:
                             path, valid = [], True
                             for k in range(length):
@@ -212,14 +209,33 @@ if uploaded_file:
                 cadangan_candidates = []
                 all_vals = [x['val'] for x in preds]
                 
+                # --- [REVISI] LOGIKA PENENTUAN ANGKA KUAT BARU ---
                 for v, stats in angka_stats.items():
-                    if stats['long_count'] > 0 or stats['short_count'] > 1:
+                    # Prioritas 1: Pola pendek (3 hari) didukung pola panjang (4-6 hari)
+                    if stats['short_count'] > 0 and stats['long_count'] > 0:
+                        stats['kategori'] = 'Pola Pendek Didukung Panjang'
+                        stats['score'] = 3
                         kuat_candidates.append(v)
+                    # Prioritas 2: Pola panjang (4-6 hari)
+                    elif stats['long_count'] > 0:
+                        stats['kategori'] = 'Pola Panjang'
+                        stats['score'] = 2
+                        kuat_candidates.append(v)
+                    # Prioritas 3: Pola pendek (3 hari) menjurus ke angka yang sama (>1 pola pendek)
+                    elif stats['short_count'] > 1:
+                        stats['kategori'] = 'Pola Pendek Menjurus (Gabungan)'
+                        stats['score'] = 1
+                        kuat_candidates.append(v)
+                    # Cadangan: Hanya 1 pola pendek tunggal
                     else:
+                        stats['kategori'] = 'Pola Pendek Tunggal'
+                        stats['score'] = 0
                         cadangan_candidates.append(v)
                 
-                kuat_candidates.sort(key=lambda x: (angka_stats[x]['total'], angka_stats[x]['max_len']), reverse=True)
+                # Sorting berdasarkan Score (Prioritas Logika Anda) -> Total Jalur -> Panjang Maksimal
+                kuat_candidates.sort(key=lambda x: (angka_stats[x]['score'], angka_stats[x]['total'], angka_stats[x]['max_len']), reverse=True)
                 cadangan_candidates.sort(key=lambda x: (angka_stats[x]['total'], angka_stats[x]['max_len']), reverse=True)
+                # --------------------------------------------------
                 
                 angka_kuat = [kuat_candidates[0]] if kuat_candidates else []
                 
@@ -235,7 +251,8 @@ if uploaded_file:
                     "kuat": angka_kuat,
                     "cadangan": angka_cadangan,
                     "max_len": kuat_max_len,
-                    "all_counts": Counter(all_vals)
+                    "all_counts": Counter(all_vals),
+                    "angka_stats": angka_stats
                 }
 
             st.session_state.highlighted = cell_patterns
@@ -270,14 +287,21 @@ if uploaded_file:
                         kuat_str = str(res['kuat'][0]) if res['kuat'] else "-"
                         cadangan_str = str(res['cadangan'][0]) if res['cadangan'] else "-"
                         
-                        pola_info = f"*(Pola {res['max_len']} Baris)*" if res['kuat'] else "*(Tidak Ada Kandidat Kuat)*"
+                        if res['kuat']:
+                            alasan = res['angka_stats'][res['kuat'][0]]['kategori']
+                            pola_info = f"*({alasan})*"
+                        else:
+                            pola_info = "*(Tidak Ada Kandidat Kuat)*"
+                            
                         st.success(f"🔥 **Kuat:** {kuat_str}\n\n{pola_info}")
-                        st.info(f"🛡️ **Cadangan:** {cadangan_str}")
+                        st.info(f"💡 **Cadangan:** {cadangan_str}")
                         
                         with st.expander("Detail Frekuensi (Semua Pola)"):
                             for val, count in res['all_counts'].most_common():
+                                stats = res['angka_stats'][val]
+                                status_kat = stats['kategori']
                                 status = " (Kuat)" if val in res['kuat'] else (" (Cadangan Utama)" if res['cadangan'] and val == res['cadangan'][0] else "")
-                                st.write(f"Angka {val}: didukung {count} jalur{status}")
+                                st.write(f"Angka {val}: {count} jalur dukung - *{status_kat}*{status}")
                     else:
                         st.write("Belum ada pola")
             
@@ -285,7 +309,6 @@ if uploaded_file:
             
             st.subheader("Statistik Jalur Pola")
             stats = st.session_state.stats
-            # [REVISI] Mengubah kolom menjadi 4 (karena min 3 hari)
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Pola 6 Hari", f"{stats[6]} Jalur")
             c2.metric("Pola 5 Hari", f"{stats[5]} Jalur")
