@@ -19,15 +19,12 @@ def generate_excel(original_ws, highlighted_data):
     new_wb = openpyxl.Workbook()
     new_ws = new_wb.active
     
-    # Atur lebar kolom menjadi 3
     for col_num in range(1, original_ws.max_column + 1):
         col_letter = get_column_letter(col_num)
         new_ws.column_dimensions[col_letter].width = 3
     
-    # Warna yang sama dengan UI
     colors = {0: "3399FF", 1: "D2B48C", 2: "22C55E", 3: "FFD700"}
     
-    # Copy data dan terapkan warna
     for r in range(1, original_ws.max_row + 1):
         for c in range(1, original_ws.max_column + 1):
             cell_val = original_ws.cell(row=r, column=c).value
@@ -124,6 +121,7 @@ if uploaded_file:
             
             predictions_raw = {0: [], 1: [], 2: [], 3: []}
             prediction_cells = set()
+            all_path_lines = []
 
             batas_bawah = ws.max_row 
 
@@ -179,9 +177,12 @@ if uploaded_file:
                                         predictions_raw[pos_offset].append(pred_val)
                                         prediction_cells.add((r_next, c_next))
                                         
+                                        # Simpan koordinat lengkap jalur untuk membuat garis alur visual
+                                        full_path = list(reversed(path)) + [(r_next, c_next)]
+                                        all_path_lines.append({"pos": pos_offset, "nodes": full_path})
+                                        
                                 break 
 
-            # Rekapitulasi jumlah jalur mengarah ke tiap angka
             prediction_results = {}
             for p in range(4):
                 prediction_results[p] = Counter(predictions_raw[p])
@@ -190,6 +191,7 @@ if uploaded_file:
             st.session_state.stats = total_stats
             st.session_state.prediction_results = prediction_results
             st.session_state.prediction_cells = prediction_cells
+            st.session_state.all_path_lines = all_path_lines
             st.session_state.scanned = True
             st.rerun()
 
@@ -205,7 +207,7 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
-            st.subheader("🎯 Ringkasan Jalur Prediksi (Jumlah Jalur per Angka)")
+            st.subheader("🎯 Ringkasan Jalur Prediksi (Gabungan Angka & Indeks)")
             pos_names = ["As", "Kop", "Kepala", "Ekor"]
             
             pred_cols = st.columns(4)
@@ -215,9 +217,21 @@ if uploaded_file:
                     counts = st.session_state.get("prediction_results", {}).get(p, Counter())
                     
                     if counts:
-                        # Menampilkan daftar angka berdasarkan jumlah jalur terbanyak
-                        for val, count in counts.most_common():
-                            st.write(f"🔹 **Angka {val}:** {count} Jalur")
+                        # Penggabungan frekuensi Angka Utama + Angka Indeks (+5)
+                        combined_list = []
+                        for base in range(5):
+                            idx_partner = base + 5
+                            c_base = counts.get(base, 0)
+                            c_idx = counts.get(idx_partner, 0)
+                            total_combined = c_base + c_idx
+                            if total_combined > 0:
+                                combined_list.append((base, idx_partner, total_combined, c_base, c_idx))
+                        
+                        # Urutkan berdasarkan total jalur terbanyak
+                        combined_list.sort(key=lambda x: x[2], reverse=True)
+                        
+                        for base, idx_partner, total_combined, c_base, c_idx in combined_list:
+                            st.write(f"🔹 **Angka {base} / {idx_partner}:** {total_combined} Jalur *(Detail: {base}={c_base}, {idx_partner}={c_idx})*")
                     else:
                         st.info("Tidak ada jalur pola ditemukan")
             
@@ -231,21 +245,76 @@ if uploaded_file:
             c3.metric("Pola 4 Hari", f"{stats[4]} Jalur")
             c4.metric("Pola 3 Hari", f"{stats[3]} Jalur")
 
-            st.subheader("Live Preview Grid")
+            st.subheader("Live Preview Grid (dengan Garis Alur)")
             highlighted = st.session_state.get("highlighted", {})
             prediction_cells = st.session_state.get("prediction_cells", set())
+            all_path_lines = st.session_state.get("all_path_lines", [])
             
-            html = ["<div style='overflow-x: auto;'><table style='border-collapse: collapse; width: 100%; text-align: center; font-family: monospace; font-size: 12px;'>"]
+            # Pengaturan Ukuran Grid Presisi (Px)
+            ROW_H = 30
+            HDR_H = 32
+            COL_LINE_W = 40
+            CELL_W = 28
+            GAP_W = 12
             
-            # Header
-            html.append("<tr style='background-color: #0f172a; color: white;'><th>Line</th>")
+            r_min = max(1, ws.max_row - 30)
+            r_max = ws.max_row
+            num_displayed_rows = r_max - r_min + 1
+            
+            total_width = COL_LINE_W + 7 * (4 * CELL_W + GAP_W)
+            total_height = HDR_H + num_displayed_rows * ROW_H
+            
+            def get_cell_center(r, c):
+                if r < r_min or r > r_max: return None, None
+                row_idx = r - r_min
+                cy = HDR_H + row_idx * ROW_H + (ROW_H / 2)
+                
+                cx = None
+                for day_i, sc in enumerate(start_cols):
+                    if sc <= c <= sc + 3:
+                        offset = c - sc
+                        cx = COL_LINE_W + day_i * (4 * CELL_W + GAP_W) + offset * CELL_W + (CELL_W / 2)
+                        break
+                return cx, cy
+
+            # Render Garis SVG Alur
+            stroke_colors = {
+                0: "rgba(51, 153, 255, 0.7)",  # As (Biru)
+                1: "rgba(210, 180, 140, 0.8)", # Kop (Cokelat)
+                2: "rgba(34, 197, 94, 0.7)",   # Kepala (Hijau)
+                3: "rgba(255, 215, 0, 0.8)"    # Ekor (Emas)
+            }
+            
+            svg_elements = []
+            for path in all_path_lines:
+                pos = path["pos"]
+                nodes = path["nodes"]
+                color = stroke_colors.get(pos, "rgba(255, 0, 0, 0.6)")
+                
+                points = []
+                for r, c in nodes:
+                    cx, cy = get_cell_center(r, c)
+                    if cx is not None and cy is not None:
+                        points.append(f"{cx},{cy}")
+                
+                if len(points) > 1:
+                    pts_str = " ".join(points)
+                    svg_elements.append(f'<polyline points="{pts_str}" fill="none" stroke="{color}" stroke-width="2" stroke-dasharray="3,3" />')
+
+            svg_html = f'<svg style="position: absolute; top: 0; left: 0; width: {total_width}px; height: {total_height}px; pointer-events: none; z-index: 2;">{"".join(svg_elements)}</svg>'
+
+            # Render Grid HTML
+            html = [f"<div style='position: relative; overflow-x: auto; width: 100%;'>{svg_html}<table style='table-layout: fixed; border-collapse: collapse; width: {total_width}px; text-align: center; font-family: monospace; font-size: 12px; z-index: 1;'>"]
+            
+            # Header Row
+            html.append(f"<tr style='background-color: #0f172a; color: white; height: {HDR_H}px;'><th style='width: {COL_LINE_W}px;'>Line</th>")
             for h in hari_tabel:
-                html.append(f"<th colspan='4'>{h}</th><th style='width: 15px;'></th>") 
+                html.append(f"<th colspan='4' style='width: {4*CELL_W}px;'>{h}</th><th style='width: {GAP_W}px;'></th>") 
             html.append("</tr>")
             
             # Data Rows
-            for r in range(max(1, ws.max_row - 30), ws.max_row + 1):
-                html.append(f"<tr><td style='border: 1px solid #ccc; background-color: #f0f0f0; width: 25px; height: 25px; text-align: center; font-weight: bold;'>{r}</td>")
+            for r in range(r_min, r_max + 1):
+                html.append(f"<tr style='height: {ROW_H}px;'><td style='border: 1px solid #ccc; background-color: #f0f0f0; width: {COL_LINE_W}px; font-weight: bold;'>{r}</td>")
                 
                 for i, start_col in enumerate(start_cols):
                     for offset in range(4):
@@ -266,12 +335,13 @@ if uploaded_file:
                         border_style = "2px solid #dc2626" if is_pred else "1px solid #ccc"
                         text_color = "#dc2626" if is_pred else "inherit"
                         
-                        html.append(f"<td style='border: {border_style}; background-color: {bg}; color: {text_color}; font-weight: bold; width: 25px; height: 25px;'>{display_val}</td>")
+                        html.append(f"<td style='border: {border_style}; background-color: {bg}; color: {text_color}; font-weight: bold; width: {CELL_W}px;'>{display_val}</td>")
                     
-                    html.append("<td style='width: 15px;'></td>")
+                    html.append(f"<td style='width: {GAP_W}px;'></td>")
                     
                 html.append("</tr>")
             html.append("</table></div>")
+            
             st.markdown("".join(html), unsafe_allow_html=True)
 
     except Exception as e:
