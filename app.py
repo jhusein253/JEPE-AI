@@ -4,6 +4,7 @@ import io
 from openpyxl.styles import PatternFill
 from openpyxl.utils import get_column_letter
 from collections import Counter
+from PIL import Image, ImageDraw, ImageFont
 
 # Setup halaman
 st.set_page_config(page_title="JEPE AI Pro", layout="wide")
@@ -14,7 +15,7 @@ def clean_int(v):
     try: return int(float(str(v).strip()))
     except (ValueError, TypeError): return None
 
-# Fungsi generate_excel dengan lebar kolom 3
+# Fungsi generate_excel
 def generate_excel(original_ws, highlighted_data):
     new_wb = openpyxl.Workbook()
     new_ws = new_wb.active
@@ -37,6 +38,112 @@ def generate_excel(original_ws, highlighted_data):
     
     buf = io.BytesIO()
     new_wb.save(buf)
+    buf.seek(0)
+    return buf
+
+# Fungsi generate_pdf (Visual Ekspor dengan Garis Alur)
+def generate_pdf(ws, highlighted_data, prediction_cells, all_path_lines, start_cols, hari_tabel):
+    SCALE = 2 # Skala resolusi tinggi untuk PDF
+    CELL_W = 28 * SCALE
+    ROW_H = 30 * SCALE
+    GAP_W = 12 * SCALE
+    COL_LINE_W = 40 * SCALE
+    HDR_H = 32 * SCALE
+    
+    # Render maksimal 40 baris terakhir untuk dicetak di PDF agar tidak terlalu panjang
+    r_min = max(1, ws.max_row - 40)
+    r_max = ws.max_row
+    num_rows = r_max - r_min + 1
+    
+    width = COL_LINE_W + 7 * (4 * CELL_W + GAP_W)
+    height = HDR_H + num_rows * ROW_H
+    
+    img = Image.new('RGB', (width, height), 'white')
+    draw = ImageDraw.Draw(img)
+    
+    # Load font default
+    font = ImageFont.load_default()
+    font_bold = font
+    try:
+        font = ImageFont.truetype("arial.ttf", 14 * SCALE)
+        font_bold = ImageFont.truetype("arialbd.ttf", 14 * SCALE)
+    except: pass # Fallback ke font bawaan bila Arial tidak tersedia
+        
+    def get_center(r, c):
+        row_idx = r - r_min
+        cy = HDR_H + row_idx * ROW_H + (ROW_H / 2)
+        cx = COL_LINE_W
+        for day_i, sc in enumerate(start_cols):
+            if sc <= c <= sc + 3:
+                offset = c - sc
+                cx += day_i * (4 * CELL_W + GAP_W) + offset * CELL_W + (CELL_W / 2)
+                return cx, cy
+        return None, None
+
+    # Menggambar Header Kolom
+    draw.rectangle([0, 0, width, HDR_H], fill="#0f172a")
+    draw.text((10*SCALE, 8*SCALE), "Line", fill="white", font=font_bold)
+    
+    for i, h in enumerate(hari_tabel):
+        x = COL_LINE_W + i * (4 * CELL_W + GAP_W)
+        draw.text((x + CELL_W, 8*SCALE), h, fill="white", font=font_bold)
+        
+    bg_colors = {0: "#3399FF", 1: "#D2B48C", 2: "#22C55E", 3: "#FFD700"}
+    
+    # Menggambar Sel dan Angka
+    for r in range(r_min, r_max + 1):
+        row_idx = r - r_min
+        y = HDR_H + row_idx * ROW_H
+        
+        draw.rectangle([0, y, COL_LINE_W, y + ROW_H], fill="#f0f0f0", outline="#cccccc")
+        draw.text((10*SCALE, y + 6*SCALE), str(r), fill="black", font=font_bold)
+        
+        for i, start_col in enumerate(start_cols):
+            for offset in range(4):
+                c_idx = start_col + offset
+                x = COL_LINE_W + i * (4 * CELL_W + GAP_W) + offset * CELL_W
+                
+                val = ws.cell(row=r, column=c_idx).value
+                display_val = str(val) if val is not None else "-"
+                
+                bg = "white"
+                is_pred = (r, c_idx) in prediction_cells
+                if (r, c_idx) in highlighted_data:
+                    p = highlighted_data[(r, c_idx)]["pos"]
+                    bg = bg_colors.get(p, "white")
+                elif is_pred:
+                    bg = "#fee2e2"
+                    
+                outline = "#dc2626" if is_pred else "#cccccc"
+                text_color = "#dc2626" if is_pred else "black"
+                
+                draw.rectangle([x, y, x + CELL_W, y + ROW_H], fill=bg, outline=outline)
+                draw.text((x + 8*SCALE, y + 6*SCALE), display_val, fill=text_color, font=font)
+                
+    # Menggambar Garis Alur (Line Connectors)
+    stroke_colors = {
+        0: (51, 153, 255),   # As
+        1: (210, 180, 140),  # Kop
+        2: (34, 197, 94),    # Kepala
+        3: (255, 215, 0)     # Ekor
+    }
+    for path in all_path_lines:
+        pos = path["pos"]
+        nodes = path["nodes"]
+        color = stroke_colors.get(pos, (255, 0, 0))
+        
+        pts = []
+        for r, c in nodes:
+            if r_min <= r <= r_max:
+                cx, cy = get_center(r, c)
+                if cx is not None:
+                    pts.append((cx, cy))
+        
+        if len(pts) > 1:
+            draw.line(pts, fill=color, width=2*SCALE)
+            
+    buf = io.BytesIO()
+    img.save(buf, format="PDF", resolution=100.0)
     buf.seek(0)
     return buf
 
@@ -90,7 +197,6 @@ if uploaded_file:
                 inputs.append(user_val)
                 update_targets.append((current_r, c_start))
 
-        # Live Update Worksheet Memori
         for i, user_val in enumerate(inputs):
             r_target, c_start = update_targets[i]
             user_val = user_val.ljust(4, '0')[:4] 
@@ -134,12 +240,9 @@ if uploaded_file:
                     
                     if c_terdekat:
                         allowed = {
-                            digit, 
-                            indek,
-                            (digit - 1) % 10,
-                            (digit + 1) % 10,
-                            (indek - 1) % 10,
-                            (indek + 1) % 10
+                            digit, indek,
+                            (digit - 1) % 10, (digit + 1) % 10,
+                            (indek - 1) % 10, (indek + 1) % 10
                         }
                         current_allowed.append(list(allowed))
                     else:
@@ -177,7 +280,6 @@ if uploaded_file:
                                         predictions_raw[pos_offset].append(pred_val)
                                         prediction_cells.add((r_next, c_next))
                                         
-                                        # Simpan koordinat lengkap jalur untuk membuat garis alur visual
                                         full_path = list(reversed(path)) + [(r_next, c_next)]
                                         all_path_lines.append({"pos": pos_offset, "nodes": full_path})
                                         
@@ -199,13 +301,33 @@ if uploaded_file:
         if st.session_state.get("scanned"):
             st.divider()
             
-            excel_buffer = generate_excel(ws, st.session_state.get("highlighted", {}))
-            st.download_button(
-                label="📥 Download Hasil Scan (.xlsx)",
-                data=excel_buffer,
-                file_name="hasil_scan_paito.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            # Pilihan Download Bersebelahan
+            dl_col1, dl_col2 = st.columns(2)
+            with dl_col1:
+                excel_buffer = generate_excel(ws, st.session_state.get("highlighted", {}))
+                st.download_button(
+                    label="📥 Download Excel (.xlsx)",
+                    data=excel_buffer,
+                    file_name="hasil_scan_paito.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            with dl_col2:
+                pdf_buffer = generate_pdf(
+                    ws, 
+                    st.session_state.get("highlighted", {}),
+                    st.session_state.get("prediction_cells", set()),
+                    st.session_state.get("all_path_lines", []),
+                    start_cols,
+                    hari_tabel
+                )
+                st.download_button(
+                    label="🖨️ Download Laporan PDF (Visual Garis Alur)",
+                    data=pdf_buffer,
+                    file_name="hasil_visual_paito.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
             
             st.subheader("🎯 Ringkasan Jalur Prediksi (Gabungan Angka & Indeks)")
             pos_names = ["As", "Kop", "Kepala", "Ekor"]
@@ -217,7 +339,6 @@ if uploaded_file:
                     counts = st.session_state.get("prediction_results", {}).get(p, Counter())
                     
                     if counts:
-                        # Penggabungan frekuensi Angka Utama + Angka Indeks (+5)
                         combined_list = []
                         for base in range(5):
                             idx_partner = base + 5
@@ -227,7 +348,6 @@ if uploaded_file:
                             if total_combined > 0:
                                 combined_list.append((base, idx_partner, total_combined, c_base, c_idx))
                         
-                        # Urutkan berdasarkan total jalur terbanyak
                         combined_list.sort(key=lambda x: x[2], reverse=True)
                         
                         for base, idx_partner, total_combined, c_base, c_idx in combined_list:
@@ -250,7 +370,6 @@ if uploaded_file:
             prediction_cells = st.session_state.get("prediction_cells", set())
             all_path_lines = st.session_state.get("all_path_lines", [])
             
-            # Pengaturan Ukuran Grid Presisi (Px)
             ROW_H = 30
             HDR_H = 32
             COL_LINE_W = 40
@@ -264,7 +383,7 @@ if uploaded_file:
             total_width = COL_LINE_W + 7 * (4 * CELL_W + GAP_W)
             total_height = HDR_H + num_displayed_rows * ROW_H
             
-            def get_cell_center(r, c):
+            def get_cell_center_html(r, c):
                 if r < r_min or r > r_max: return None, None
                 row_idx = r - r_min
                 cy = HDR_H + row_idx * ROW_H + (ROW_H / 2)
@@ -277,12 +396,11 @@ if uploaded_file:
                         break
                 return cx, cy
 
-            # Render Garis SVG Alur
             stroke_colors = {
-                0: "rgba(51, 153, 255, 0.7)",  # As (Biru)
-                1: "rgba(210, 180, 140, 0.8)", # Kop (Cokelat)
-                2: "rgba(34, 197, 94, 0.7)",   # Kepala (Hijau)
-                3: "rgba(255, 215, 0, 0.8)"    # Ekor (Emas)
+                0: "rgba(51, 153, 255, 0.7)",  
+                1: "rgba(210, 180, 140, 0.8)", 
+                2: "rgba(34, 197, 94, 0.7)",   
+                3: "rgba(255, 215, 0, 0.8)"    
             }
             
             svg_elements = []
@@ -293,7 +411,7 @@ if uploaded_file:
                 
                 points = []
                 for r, c in nodes:
-                    cx, cy = get_cell_center(r, c)
+                    cx, cy = get_cell_center_html(r, c)
                     if cx is not None and cy is not None:
                         points.append(f"{cx},{cy}")
                 
@@ -303,16 +421,13 @@ if uploaded_file:
 
             svg_html = f'<svg style="position: absolute; top: 0; left: 0; width: {total_width}px; height: {total_height}px; pointer-events: none; z-index: 2;">{"".join(svg_elements)}</svg>'
 
-            # Render Grid HTML
             html = [f"<div style='position: relative; overflow-x: auto; width: 100%;'>{svg_html}<table style='table-layout: fixed; border-collapse: collapse; width: {total_width}px; text-align: center; font-family: monospace; font-size: 12px; z-index: 1;'>"]
             
-            # Header Row
             html.append(f"<tr style='background-color: #0f172a; color: white; height: {HDR_H}px;'><th style='width: {COL_LINE_W}px;'>Line</th>")
             for h in hari_tabel:
                 html.append(f"<th colspan='4' style='width: {4*CELL_W}px;'>{h}</th><th style='width: {GAP_W}px;'></th>") 
             html.append("</tr>")
             
-            # Data Rows
             for r in range(r_min, r_max + 1):
                 html.append(f"<tr style='height: {ROW_H}px;'><td style='border: 1px solid #ccc; background-color: #f0f0f0; width: {COL_LINE_W}px; font-weight: bold;'>{r}</td>")
                 
