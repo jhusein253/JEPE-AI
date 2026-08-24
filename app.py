@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 # Setup halaman
 st.set_page_config(page_title="JEPE AI Pro", layout="wide")
-st.title("JEPE AI")
+st.title("JEPE AI PRO")
 
 # Fungsi pembersih data
 def clean_int(v):
@@ -219,8 +219,13 @@ if uploaded_file:
             prediction_cells = set()
             all_path_lines = []
             
-            # --- PENAMBAHAN VARIABEL UNTUK POLA TERPANJANG ---
-            longest_pattern_per_pos = {0: 0, 1: 0, 2: 0, 3: 0}
+            # --- PENAMBAHAN DICTIONARY UNTUK MENYIMPAN TARGET POLA TERPANJANG ---
+            longest_pattern_per_pos = {
+                0: {"length": 0, "targets": set()},
+                1: {"length": 0, "targets": set()},
+                2: {"length": 0, "targets": set()},
+                3: {"length": 0, "targets": set()}
+            }
 
             batas_bawah = ws.max_row 
 
@@ -262,9 +267,6 @@ if uploaded_file:
                                 total_stats[length] += 1
                                 for r_c, c_c in path: cell_patterns[(r_c, c_c)] = {"length": length, "pos": pos_offset}
                                 
-                                # --- MENYIMPAN DATA POLA TERPANJANG ---
-                                longest_pattern_per_pos[pos_offset] = max(longest_pattern_per_pos[pos_offset], length)
-                                
                                 r_next = r_start if mode == "Lurus" else (r_start + 1 if mode == "Naik" else r_start - 1)
                                 
                                 if 1 <= r_next < batas_bawah:
@@ -275,6 +277,14 @@ if uploaded_file:
                                     if pred_val is not None:
                                         predictions_raw[pos_offset].append(pred_val)
                                         prediction_cells.add((r_next, c_next))
+                                        
+                                        # --- MENYIMPAN PANJANG DAN ANGKA TARGET ---
+                                        current_max = longest_pattern_per_pos[pos_offset]["length"]
+                                        if length > current_max:
+                                            longest_pattern_per_pos[pos_offset]["length"] = length
+                                            longest_pattern_per_pos[pos_offset]["targets"] = {pred_val}
+                                        elif length == current_max:
+                                            longest_pattern_per_pos[pos_offset]["targets"].add(pred_val)
                                         
                                         full_path = list(reversed(path)) + [(r_next, c_next)]
                                         all_path_lines.append({"pos": pos_offset, "nodes": full_path})
@@ -328,18 +338,26 @@ if uploaded_file:
             st.subheader("🎯 Ringkasan Jalur Prediksi (Gabungan Angka & Indeks)")
             pos_names = ["As", "Kop", "Kepala", "Ekor"]
             
-            # --- MENGAMBIL DATA POLA TERPANJANG ---
-            longest_patterns = st.session_state.get("longest_pattern_per_pos", {0: 0, 1: 0, 2: 0, 3: 0})
+            # --- MENGAMBIL DATA POLA TERPANJANG BERSERTA TARGETNYA ---
+            default_longest = {
+                0: {"length": 0, "targets": set()}, 1: {"length": 0, "targets": set()},
+                2: {"length": 0, "targets": set()}, 3: {"length": 0, "targets": set()}
+            }
+            longest_patterns = st.session_state.get("longest_pattern_per_pos", default_longest)
             
             pred_cols = st.columns(4)
             for p in range(4):
                 with pred_cols[p]:
                     st.markdown(f"### **Posisi {pos_names[p]}**")
                     
-                    # --- MENAMPILKAN INDIKATOR POLA TERPANJANG ---
-                    max_len = longest_patterns.get(p, 0)
+                    # --- MENAMPILKAN INDIKATOR POLA TERPANJANG & ANGKA ---
+                    longest_info = longest_patterns.get(p, {"length": 0, "targets": set()})
+                    max_len = longest_info["length"]
+                    targets = longest_info["targets"]
+                    
                     if max_len > 0:
-                        st.markdown(f"**🔥 Pola Terpanjang: {max_len} Hari**")
+                        target_str = ", ".join(map(str, sorted(list(targets))))
+                        st.markdown(f"**🔥 Pola Terpanjang: {max_len} Hari** ➔ Angka: **{target_str}**")
                     else:
                         st.markdown("**🔥 Pola Terpanjang: -**")
                         
