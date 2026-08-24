@@ -110,7 +110,6 @@ if uploaded_file:
         c_naik = st.checkbox("Diagonal Naik", value=True)
         c_turun = st.checkbox("Diagonal Turun", value=True)
         
-        # Opsi baru untuk menghitung Angka Terdekat
         c_terdekat = st.checkbox("Toleransi Angka Terdekat (+/- 1 dari Angka & Indeks)", value=True)
         
         use_single_ref = st.checkbox("Mode Acuan Posisi Tunggal", value=False)
@@ -177,83 +176,15 @@ if uploaded_file:
                                     
                                     pred_val = clean_int(ws.cell(row=r_next, column=c_next).value)
                                     if pred_val is not None:
-                                        predictions_raw[pos_offset].append({"val": pred_val, "length": length})
+                                        predictions_raw[pos_offset].append(pred_val)
                                         prediction_cells.add((r_next, c_next))
                                         
                                 break 
 
+            # Rekapitulasi jumlah jalur mengarah ke tiap angka
             prediction_results = {}
             for p in range(4):
-                preds = predictions_raw[p]
-                if not preds: continue
-                
-                angka_stats = {}
-                for x in preds:
-                    v = x['val']
-                    l = x['length']
-                    
-                    if v not in angka_stats:
-                        angka_stats[v] = {'long_count': 0, 'short_count': 0, 'total': 0, 'max_len': 0}
-                    
-                    angka_stats[v]['total'] += 1
-                    
-                    if l >= 4:
-                        angka_stats[v]['long_count'] += 1
-                    else:
-                        angka_stats[v]['short_count'] += 1
-                        
-                    if l > angka_stats[v]['max_len']:
-                        angka_stats[v]['max_len'] = l
-
-                kuat_candidates = []
-                cadangan_candidates = []
-                all_vals = [x['val'] for x in preds]
-                
-                # --- [REVISI] LOGIKA PENENTUAN ANGKA KUAT BARU ---
-                for v, stats in angka_stats.items():
-                    # Prioritas 1: Pola pendek (3 hari) didukung pola panjang (4-6 hari)
-                    if stats['short_count'] > 0 and stats['long_count'] > 0:
-                        stats['kategori'] = 'Pola Pendek Didukung Panjang'
-                        stats['score'] = 3
-                        kuat_candidates.append(v)
-                    # Prioritas 2: Pola panjang (4-6 hari)
-                    elif stats['long_count'] > 0:
-                        stats['kategori'] = 'Pola Panjang'
-                        stats['score'] = 2
-                        kuat_candidates.append(v)
-                    # Prioritas 3: Pola pendek (3 hari) menjurus ke angka yang sama (>1 pola pendek)
-                    elif stats['short_count'] > 1:
-                        stats['kategori'] = 'Pola Pendek Menjurus (Gabungan)'
-                        stats['score'] = 1
-                        kuat_candidates.append(v)
-                    # Cadangan: Hanya 1 pola pendek tunggal
-                    else:
-                        stats['kategori'] = 'Pola Pendek Tunggal'
-                        stats['score'] = 0
-                        cadangan_candidates.append(v)
-                
-                # Sorting berdasarkan Score (Prioritas Logika Anda) -> Total Jalur -> Panjang Maksimal
-                kuat_candidates.sort(key=lambda x: (angka_stats[x]['score'], angka_stats[x]['total'], angka_stats[x]['max_len']), reverse=True)
-                cadangan_candidates.sort(key=lambda x: (angka_stats[x]['total'], angka_stats[x]['max_len']), reverse=True)
-                # --------------------------------------------------
-                
-                angka_kuat = [kuat_candidates[0]] if kuat_candidates else []
-                
-                angka_cadangan = []
-                if len(kuat_candidates) > 1:
-                    angka_cadangan = [kuat_candidates[1]]
-                elif cadangan_candidates:
-                    angka_cadangan = [cadangan_candidates[0]]
-                    
-                kuat_max_len = angka_stats[angka_kuat[0]]['max_len'] if angka_kuat else 0
-                
-                prediction_results[p] = {
-                    "kuat": angka_kuat,
-                    "cadangan": angka_cadangan,
-                    "max_len": kuat_max_len,
-                    "all_counts": Counter(all_vals),
-                    "angka_stats": angka_stats
-                }
+                prediction_results[p] = Counter(predictions_raw[p])
 
             st.session_state.highlighted = cell_patterns
             st.session_state.stats = total_stats
@@ -274,36 +205,21 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
-            st.subheader("🎯 Prediksi Hari Berikutnya")
+            st.subheader("🎯 Ringkasan Jalur Prediksi (Jumlah Jalur per Angka)")
             pos_names = ["As", "Kop", "Kepala", "Ekor"]
             
             pred_cols = st.columns(4)
             for p in range(4):
                 with pred_cols[p]:
-                    st.markdown(f"**Posisi {pos_names[p]}**")
-                    if p in st.session_state.get("prediction_results", {}):
-                        res = st.session_state.prediction_results[p]
-                        
-                        kuat_str = str(res['kuat'][0]) if res['kuat'] else "-"
-                        cadangan_str = str(res['cadangan'][0]) if res['cadangan'] else "-"
-                        
-                        if res['kuat']:
-                            alasan = res['angka_stats'][res['kuat'][0]]['kategori']
-                            pola_info = f"*({alasan})*"
-                        else:
-                            pola_info = "*(Tidak Ada Kandidat Kuat)*"
-                            
-                        st.success(f"🔥 **Kuat:** {kuat_str}\n\n{pola_info}")
-                        st.info(f"💡 **Cadangan:** {cadangan_str}")
-                        
-                        with st.expander("Detail Frekuensi (Semua Pola)"):
-                            for val, count in res['all_counts'].most_common():
-                                stats = res['angka_stats'][val]
-                                status_kat = stats['kategori']
-                                status = " (Kuat)" if val in res['kuat'] else (" (Cadangan Utama)" if res['cadangan'] and val == res['cadangan'][0] else "")
-                                st.write(f"Angka {val}: {count} jalur dukung - *{status_kat}*{status}")
+                    st.markdown(f"### **Posisi {pos_names[p]}**")
+                    counts = st.session_state.get("prediction_results", {}).get(p, Counter())
+                    
+                    if counts:
+                        # Menampilkan daftar angka berdasarkan jumlah jalur terbanyak
+                        for val, count in counts.most_common():
+                            st.write(f"🔹 **Angka {val}:** {count} Jalur")
                     else:
-                        st.write("Belum ada pola")
+                        st.info("Tidak ada jalur pola ditemukan")
             
             st.divider()
             
