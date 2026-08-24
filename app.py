@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 # Setup halaman
 st.set_page_config(page_title="JEPE AI Pro", layout="wide")
-st.title("JEPE AI - Advanced Scanner")
+st.title("JEPE AI")
 
 # Fungsi pembersih data
 def clean_int(v):
@@ -43,14 +43,13 @@ def generate_excel(original_ws, highlighted_data):
 
 # Fungsi generate_pdf (Visual Ekspor dengan Garis Alur)
 def generate_pdf(ws, highlighted_data, prediction_cells, all_path_lines, start_cols, hari_tabel):
-    SCALE = 2 # Skala resolusi tinggi untuk PDF
+    SCALE = 2 
     CELL_W = 28 * SCALE
     ROW_H = 30 * SCALE
     GAP_W = 12 * SCALE
     COL_LINE_W = 40 * SCALE
     HDR_H = 32 * SCALE
     
-    # Render maksimal 40 baris terakhir untuk dicetak di PDF agar tidak terlalu panjang
     r_min = max(1, ws.max_row - 40)
     r_max = ws.max_row
     num_rows = r_max - r_min + 1
@@ -61,13 +60,12 @@ def generate_pdf(ws, highlighted_data, prediction_cells, all_path_lines, start_c
     img = Image.new('RGB', (width, height), 'white')
     draw = ImageDraw.Draw(img)
     
-    # Load font default
     font = ImageFont.load_default()
     font_bold = font
     try:
         font = ImageFont.truetype("arial.ttf", 14 * SCALE)
         font_bold = ImageFont.truetype("arialbd.ttf", 14 * SCALE)
-    except: pass # Fallback ke font bawaan bila Arial tidak tersedia
+    except: pass 
         
     def get_center(r, c):
         row_idx = r - r_min
@@ -80,7 +78,6 @@ def generate_pdf(ws, highlighted_data, prediction_cells, all_path_lines, start_c
                 return cx, cy
         return None, None
 
-    # Menggambar Header Kolom
     draw.rectangle([0, 0, width, HDR_H], fill="#0f172a")
     draw.text((10*SCALE, 8*SCALE), "Line", fill="white", font=font_bold)
     
@@ -90,7 +87,6 @@ def generate_pdf(ws, highlighted_data, prediction_cells, all_path_lines, start_c
         
     bg_colors = {0: "#3399FF", 1: "#D2B48C", 2: "#22C55E", 3: "#FFD700"}
     
-    # Menggambar Sel dan Angka
     for r in range(r_min, r_max + 1):
         row_idx = r - r_min
         y = HDR_H + row_idx * ROW_H
@@ -120,13 +116,7 @@ def generate_pdf(ws, highlighted_data, prediction_cells, all_path_lines, start_c
                 draw.rectangle([x, y, x + CELL_W, y + ROW_H], fill=bg, outline=outline)
                 draw.text((x + 8*SCALE, y + 6*SCALE), display_val, fill=text_color, font=font)
                 
-    # Menggambar Garis Alur (Line Connectors)
-    stroke_colors = {
-        0: (51, 153, 255),   # As
-        1: (210, 180, 140),  # Kop
-        2: (34, 197, 94),    # Kepala
-        3: (255, 215, 0)     # Ekor
-    }
+    stroke_colors = {0: (51, 153, 255), 1: (210, 180, 140), 2: (34, 197, 94), 3: (255, 215, 0)}
     for path in all_path_lines:
         pos = path["pos"]
         nodes = path["nodes"]
@@ -159,7 +149,7 @@ if uploaded_file:
         hari_tabel = ["Sabtu", "Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat"]
         start_cols = [1, 6, 11, 16, 21, 26, 31]
 
-        # 2. INPUT REFERENSI (Auto-Fetch & Live Update)
+        # 2. INPUT REFERENSI
         st.header("2. Input Referensi (Auto-Fetch & Live Update)")
         
         c_opt1, c_opt2 = st.columns(2)
@@ -228,6 +218,9 @@ if uploaded_file:
             predictions_raw = {0: [], 1: [], 2: [], 3: []}
             prediction_cells = set()
             all_path_lines = []
+            
+            # --- PENAMBAHAN VARIABEL UNTUK POLA TERPANJANG ---
+            longest_pattern_per_pos = {0: 0, 1: 0, 2: 0, 3: 0}
 
             batas_bawah = ws.max_row 
 
@@ -269,6 +262,9 @@ if uploaded_file:
                                 total_stats[length] += 1
                                 for r_c, c_c in path: cell_patterns[(r_c, c_c)] = {"length": length, "pos": pos_offset}
                                 
+                                # --- MENYIMPAN DATA POLA TERPANJANG ---
+                                longest_pattern_per_pos[pos_offset] = max(longest_pattern_per_pos[pos_offset], length)
+                                
                                 r_next = r_start if mode == "Lurus" else (r_start + 1 if mode == "Naik" else r_start - 1)
                                 
                                 if 1 <= r_next < batas_bawah:
@@ -294,6 +290,7 @@ if uploaded_file:
             st.session_state.prediction_results = prediction_results
             st.session_state.prediction_cells = prediction_cells
             st.session_state.all_path_lines = all_path_lines
+            st.session_state.longest_pattern_per_pos = longest_pattern_per_pos # Menyimpan ke memori
             st.session_state.scanned = True
             st.rerun()
 
@@ -301,7 +298,6 @@ if uploaded_file:
         if st.session_state.get("scanned"):
             st.divider()
             
-            # Pilihan Download Bersebelahan
             dl_col1, dl_col2 = st.columns(2)
             with dl_col1:
                 excel_buffer = generate_excel(ws, st.session_state.get("highlighted", {}))
@@ -332,10 +328,21 @@ if uploaded_file:
             st.subheader("🎯 Ringkasan Jalur Prediksi (Gabungan Angka & Indeks)")
             pos_names = ["As", "Kop", "Kepala", "Ekor"]
             
+            # --- MENGAMBIL DATA POLA TERPANJANG ---
+            longest_patterns = st.session_state.get("longest_pattern_per_pos", {0: 0, 1: 0, 2: 0, 3: 0})
+            
             pred_cols = st.columns(4)
             for p in range(4):
                 with pred_cols[p]:
                     st.markdown(f"### **Posisi {pos_names[p]}**")
+                    
+                    # --- MENAMPILKAN INDIKATOR POLA TERPANJANG ---
+                    max_len = longest_patterns.get(p, 0)
+                    if max_len > 0:
+                        st.markdown(f"**🔥 Pola Terpanjang: {max_len} Hari**")
+                    else:
+                        st.markdown("**🔥 Pola Terpanjang: -**")
+                        
                     counts = st.session_state.get("prediction_results", {}).get(p, Counter())
                     
                     if counts:
@@ -357,7 +364,7 @@ if uploaded_file:
             
             st.divider()
             
-            st.subheader("Statistik Jalur Pola")
+            st.subheader("Statistik Jalur Keseluruhan")
             stats = st.session_state.stats
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Pola 6 Hari", f"{stats[6]} Jalur")
