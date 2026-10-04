@@ -6,10 +6,10 @@ import io
 from collections import Counter
 
 # Konfigurasi halaman antarmuka Streamlit
-st.set_page_config(page_title="Advanced Scanner 4D - Angka Kuat", layout="wide")
+st.set_page_config(page_title="Advanced Scanner 4D - Angka Kuat H+1", layout="wide")
 
 st.title("Aplikasi Pemindai Probabilitas 4D & Visualizer Excel")
-st.markdown("Menggali kemunculan angka H+1 serta mengidentifikasi **🔥 Angka Kuat** (frekuensi muncul $\ge$ 5 kali).")
+st.markdown("Menggali kemunculan angka di H+1 serta mengidentifikasi **🔥 Angka Kuat** (frekuensi muncul $\ge$ 5 kali).")
 
 # 1. Komponen Unggah File
 uploaded_file = st.file_uploader("Unggah file Excel referensi (misal: HK.xlsx)", type=["xlsx", "xls"])
@@ -64,7 +64,7 @@ if uploaded_file is not None:
         kombinasi_dict = {"As - Kop": [0, 1], "Kepala - Ekor": [2, 3]}
         col_p1, col_p2, col_p3 = st.columns(3)
         with col_p1:
-            pilihan_kombinasi = st.selectbox("Pilih Kombinasi Posisi:", list(kombinasi_dict.keys()))
+            pilihan_kombinasi = st.selectbox("Pilih Kombinasi Posisi Acuan:", list(kombinasi_dict.keys()))
             indeks_posisi = kombinasi_dict[pilihan_kombinasi]
             nama1, nama2 = pilihan_kombinasi.split(" - ")
         with col_p2:
@@ -76,52 +76,61 @@ if uploaded_file is not None:
 
     if st.button("Jalankan Scanner & Buat Excel Highlight", type="primary"):
         next_angka_list = []
+        hari_ditemukan = 0
         
         # 4. Mesin Pencarian Pola H+1
         for i in range(len(daily_data) - 1):
             if mode_analisis == "1 Digit (Tunggal)":
+                # Cari 1 posisi, ambil 1 posisi di H+1
                 if daily_data[i][indeks_posisi[0]] == target_1:
+                    hari_ditemukan += 1
                     next_val = daily_data[i+1][indeks_posisi[0]]
                     next_angka_list.append(str(next_val))
             else:
+                # Cari Kombinasi, ambil SEMUA posisi (4 digit) di H+1
                 if daily_data[i][indeks_posisi[0]] == target_1 and daily_data[i][indeks_posisi[1]] == target_2:
-                    v1 = daily_data[i+1][indeks_posisi[0]]
-                    v2 = daily_data[i+1][indeks_posisi[1]]
-                    next_angka_list.append(f"{v1}{v2}")
-                    
+                    hari_ditemukan += 1
+                    for digit in daily_data[i+1]: # Ekstrak As, Kop, Kepala, Ekor dari H+1
+                        next_angka_list.append(str(digit))
+                        
         # 5. Kalkulasi dan Tampilan Statistik
         if len(next_angka_list) > 0:
             total_found = len(next_angka_list)
             
             # Hitung Frekuensi
             counts = Counter(next_angka_list)
-            result_df = pd.DataFrame(counts.items(), columns=[f"Hasil {pilihan_posisi} (H+1)", "Frekuensi"])
+            
+            # Tentukan judul kolom berdasarkan mode
+            kolom_hasil = f"Hasil {pilihan_posisi} (H+1)" if mode_analisis == "1 Digit (Tunggal)" else "Angka H+1 (Semua Posisi)"
+            
+            result_df = pd.DataFrame(counts.items(), columns=[kolom_hasil, "Frekuensi"])
             result_df["Persentase (%)"] = (result_df["Frekuensi"] / total_found) * 100
             # Mengurutkan dari frekuensi terbanyak
             result_df = result_df.sort_values(by="Frekuensi", ascending=False).reset_index(drop=True)
             
             angka_kuat_list = []
             
-            # Tampilan Khusus Mode 2 Digit (Angka Kuat)
+            st.info(f"Pola acuan **{target_str}** ditemukan pada **{hari_ditemukan} hari** dalam riwayat.")
+            
+            # Tampilan Khusus Mode 2 Digit (Angka Kuat di semua posisi)
             if mode_analisis == "2 Digit Kombinasi (As-Kop / Kepala-Ekor)":
-                # Filter khusus angka yang frekuensinya >= 5
+                # Filter khusus angka tunggal yang frekuensinya >= 5
                 angka_kuat_df = result_df[result_df["Frekuensi"] >= 5].copy()
-                angka_kuat_list = angka_kuat_df[f"Hasil {pilihan_posisi} (H+1)"].astype(str).tolist()
+                angka_kuat_list = angka_kuat_df[kolom_hasil].astype(str).tolist()
                 
-                st.subheader("🔥 Identifikasi Angka Kuat (Minimal 5x Muncul)")
+                st.subheader("🔥 Identifikasi Angka Kuat (Minimal 5x Muncul di H+1)")
                 if not angka_kuat_df.empty:
-                    st.success(f"Ditemukan **{len(angka_kuat_df)} pasang Angka Kuat** dari acuan **{target_str}**!")
+                    angka_kuat_str = ", ".join(angka_kuat_list)
+                    st.success(f"Ditemukan Angka Kuat: **{angka_kuat_str}** (Angka-angka ini akan di-highlight hijau pada Excel).")
                     
                     display_kuat_df = angka_kuat_df.copy()
                     display_kuat_df["Persentase (%)"] = display_kuat_df["Persentase (%)"].round(2).astype(str) + " %"
                     st.dataframe(display_kuat_df, use_container_width=True)
                 else:
-                    st.warning(f"Riwayat acuan {target_str} belum memiliki Angka Kuat (tidak ada H+1 yang muncul \u2265 5 kali).")
+                    st.warning(f"Tidak ada angka yang memenuhi syarat Angka Kuat (\u2265 5 kali muncul).")
                 
                 st.divider()
-                st.subheader("📊 Seluruh Riwayat Keluaran H+1")
-            else:
-                st.info(f"Angka {pilihan_posisi} **{target_str}** ditemukan sebagai acuan sebanyak **{total_found} kali** pada riwayat data.")
+                st.subheader("📊 Statistik Seluruh Angka di H+1")
             
             # Tabel dan Grafik Keseluruhan
             display_df = result_df.copy()
@@ -131,8 +140,8 @@ if uploaded_file is not None:
             with col1:
                 st.dataframe(display_df, use_container_width=True)
             with col2:
-                chart_data = result_df.copy().set_index(f"Hasil {pilihan_posisi} (H+1)")
-                st.bar_chart(chart_data["Persentase (%)"])
+                chart_data = result_df.copy().set_index(kolom_hasil)
+                st.bar_chart(chart_data["Frekuensi"]) # Tampilkan grafik berdasarkan jumlah frekuensi
                 
             st.divider()
             
@@ -141,9 +150,9 @@ if uploaded_file is not None:
             st.caption("Keterangan Warna pada File Excel:")
             st.markdown("- 🟡 **Warna Kuning**: Kotak angka acuan (Hari Ini) yang terpilih.")
             if mode_analisis == "2 Digit Kombinasi (As-Kop / Kepala-Ekor)":
-                st.markdown("- 🟢 **Warna Hijau**: Kotak angka keluaran H+1 **(HANYA untuk Angka Kuat yang muncul $\ge$ 5 kali)**.")
+                st.markdown("- 🟢 **Warna Hijau**: Menandai **Angka Kuat** di baris H+1 (bisa di posisi As, Kop, Kepala, maupun Ekor).")
             else:
-                st.markdown("- 🟢 **Warna Hijau**: Kotak angka keluaran H+1.")
+                st.markdown("- 🟢 **Warna Hijau**: Kotak angka keluaran H+1 pada posisi yang sama.")
             
             wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
             ws = wb.active
@@ -177,25 +186,23 @@ if uploaded_file is not None:
                         match = True
                         
                 if match:
-                    # Validasi apakah keluaran H+1 layak diwarnai hijau
-                    is_angka_kuat = False
-                    if mode_analisis == "1 Digit (Tunggal)":
-                        is_angka_kuat = True # Mode 1 digit semua diwarnai
-                    else:
-                        outcome_str = f"{daily_cells[i+1]['values'][indeks_posisi[0]]}{daily_cells[i+1]['values'][indeks_posisi[1]]}"
-                        if outcome_str in angka_kuat_list:
-                            is_angka_kuat = True # Mode 2 digit hanya hijau jika >= 5 kali
-                            
-                    # Warnai Kuning untuk Acuan
+                    # 1. Warnai Kuning untuk Acuan (Hari Ini)
                     for idx in indeks_posisi:
                         tr, tc = daily_cells[i]['cells'][idx]
                         ws.cell(row=tr, column=tc).fill = fill_target
                     
-                    # Warnai Hijau untuk H+1 (Jika Lolos Validasi)
-                    if is_angka_kuat:
-                        for idx in indeks_posisi:
-                            or_, oc = daily_cells[i+1]['cells'][idx]
-                            ws.cell(row=or_, column=oc).fill = fill_outcome
+                    # 2. Warnai Hijau untuk H+1
+                    if mode_analisis == "1 Digit (Tunggal)":
+                        # Warnai posisi yang sama saja
+                        or_, oc = daily_cells[i+1]['cells'][indeks_posisi[0]]
+                        ws.cell(row=or_, column=oc).fill = fill_outcome
+                    else:
+                        # Mode 2 Digit: Cek ke-4 posisi di H+1, warnai hijau jika itu adalah Angka Kuat
+                        for pos_idx in range(4):
+                            digit_h1 = str(daily_cells[i+1]['values'][pos_idx])
+                            if digit_h1 in angka_kuat_list:
+                                or_, oc = daily_cells[i+1]['cells'][pos_idx]
+                                ws.cell(row=or_, column=oc).fill = fill_outcome
             
             # Simpan workbook ke memory buffer
             excel_buffer = io.BytesIO()
