@@ -6,10 +6,10 @@ import io
 from collections import Counter
 
 # Konfigurasi halaman antarmuka Streamlit
-st.set_page_config(page_title="Advanced Scanner 4D - Excel Highlighter", layout="wide")
+st.set_page_config(page_title="Advanced Scanner 4D - Angka Kuat", layout="wide")
 
 st.title("Aplikasi Pemindai Probabilitas 4D & Visualizer Excel")
-st.markdown("Menggali persentase kemunculan angka H+1 serta mengunduh file Excel dengan penanda warna otomatis.")
+st.markdown("Menggali kemunculan angka H+1 serta mengidentifikasi **🔥 Angka Kuat** (frekuensi muncul $\ge$ 5 kali).")
 
 # 1. Komponen Unggah File
 uploaded_file = st.file_uploader("Unggah file Excel referensi (misal: HK.xlsx)", type=["xlsx", "xls"])
@@ -25,8 +25,6 @@ if uploaded_file is not None:
         
     # 2. Algoritma perataan (flattening) matriks ke urutan kronologis harian
     daily_data = []
-    
-    # Pemetaan kolom berdasarkan struktur matriks pada HK.xlsx
     days_cols = {
         'SABTU': ['SABTU', 'Unnamed: 1', 'Unnamed: 2', 'Unnamed: 3'],
         'MINGGU': ['MINGGU', 'Unnamed: 6', 'Unnamed: 7', 'Unnamed: 8'],
@@ -37,7 +35,6 @@ if uploaded_file is not None:
         'JUMAT': ['JUMAT', 'Unnamed: 31', 'Unnamed: 32', 'Unnamed: 33']
     }
 
-    # Looping per baris mingguan, lalu dipecah per hari secara berurutan
     for index, row in df.iterrows():
         for day, cols in days_cols.items():
             try:
@@ -95,14 +92,38 @@ if uploaded_file is not None:
         # 5. Kalkulasi dan Tampilan Statistik
         if len(next_angka_list) > 0:
             total_found = len(next_angka_list)
-            st.info(f"Kombinasi **{pilihan_posisi}** dengan angka acuan **{target_str}** ditemukan sebanyak **{total_found} kali** pada riwayat data.")
             
             # Hitung Frekuensi
             counts = Counter(next_angka_list)
             result_df = pd.DataFrame(counts.items(), columns=[f"Hasil {pilihan_posisi} (H+1)", "Frekuensi"])
             result_df["Persentase (%)"] = (result_df["Frekuensi"] / total_found) * 100
-            result_df = result_df.sort_values(by="Persentase (%)", ascending=False).reset_index(drop=True)
+            # Mengurutkan dari frekuensi terbanyak
+            result_df = result_df.sort_values(by="Frekuensi", ascending=False).reset_index(drop=True)
             
+            angka_kuat_list = []
+            
+            # Tampilan Khusus Mode 2 Digit (Angka Kuat)
+            if mode_analisis == "2 Digit Kombinasi (As-Kop / Kepala-Ekor)":
+                # Filter khusus angka yang frekuensinya >= 5
+                angka_kuat_df = result_df[result_df["Frekuensi"] >= 5].copy()
+                angka_kuat_list = angka_kuat_df[f"Hasil {pilihan_posisi} (H+1)"].astype(str).tolist()
+                
+                st.subheader("🔥 Identifikasi Angka Kuat (Minimal 5x Muncul)")
+                if not angka_kuat_df.empty:
+                    st.success(f"Ditemukan **{len(angka_kuat_df)} pasang Angka Kuat** dari acuan **{target_str}**!")
+                    
+                    display_kuat_df = angka_kuat_df.copy()
+                    display_kuat_df["Persentase (%)"] = display_kuat_df["Persentase (%)"].round(2).astype(str) + " %"
+                    st.dataframe(display_kuat_df, use_container_width=True)
+                else:
+                    st.warning(f"Riwayat acuan {target_str} belum memiliki Angka Kuat (tidak ada H+1 yang muncul \u2265 5 kali).")
+                
+                st.divider()
+                st.subheader("📊 Seluruh Riwayat Keluaran H+1")
+            else:
+                st.info(f"Angka {pilihan_posisi} **{target_str}** ditemukan sebagai acuan sebanyak **{total_found} kali** pada riwayat data.")
+            
+            # Tabel dan Grafik Keseluruhan
             display_df = result_df.copy()
             display_df["Persentase (%)"] = display_df["Persentase (%)"].round(2).astype(str) + " %"
             
@@ -118,8 +139,11 @@ if uploaded_file is not None:
             # 6. Pembuatan File Excel Berwarna (Highlighting via OpenPyXL)
             st.subheader("📥 Unduh Hasil Excel Terwarnai")
             st.caption("Keterangan Warna pada File Excel:")
-            st.markdown("- 🟡 **Warna Kuning**: Kotak angka acuan yang terpilih.")
-            st.markdown("- 🟢 **Warna Hijau**: Kotak angka keluaran pada hari berikutnya (H+1).")
+            st.markdown("- 🟡 **Warna Kuning**: Kotak angka acuan (Hari Ini) yang terpilih.")
+            if mode_analisis == "2 Digit Kombinasi (As-Kop / Kepala-Ekor)":
+                st.markdown("- 🟢 **Warna Hijau**: Kotak angka keluaran H+1 **(HANYA untuk Angka Kuat yang muncul $\ge$ 5 kali)**.")
+            else:
+                st.markdown("- 🟢 **Warna Hijau**: Kotak angka keluaran H+1.")
             
             wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
             ws = wb.active
@@ -153,12 +177,25 @@ if uploaded_file is not None:
                         match = True
                         
                 if match:
+                    # Validasi apakah keluaran H+1 layak diwarnai hijau
+                    is_angka_kuat = False
+                    if mode_analisis == "1 Digit (Tunggal)":
+                        is_angka_kuat = True # Mode 1 digit semua diwarnai
+                    else:
+                        outcome_str = f"{daily_cells[i+1]['values'][indeks_posisi[0]]}{daily_cells[i+1]['values'][indeks_posisi[1]]}"
+                        if outcome_str in angka_kuat_list:
+                            is_angka_kuat = True # Mode 2 digit hanya hijau jika >= 5 kali
+                            
+                    # Warnai Kuning untuk Acuan
                     for idx in indeks_posisi:
                         tr, tc = daily_cells[i]['cells'][idx]
                         ws.cell(row=tr, column=tc).fill = fill_target
-                        
-                        or_, oc = daily_cells[i+1]['cells'][idx]
-                        ws.cell(row=or_, column=oc).fill = fill_outcome
+                    
+                    # Warnai Hijau untuk H+1 (Jika Lolos Validasi)
+                    if is_angka_kuat:
+                        for idx in indeks_posisi:
+                            or_, oc = daily_cells[i+1]['cells'][idx]
+                            ws.cell(row=or_, column=oc).fill = fill_outcome
             
             # Simpan workbook ke memory buffer
             excel_buffer = io.BytesIO()
@@ -166,7 +203,7 @@ if uploaded_file is not None:
             excel_bytes = excel_buffer.getvalue()
             
             # Tombol Download
-            filename = f"Analisis_{pilihan_posisi}_{target_str}.xlsx".replace(" ", "_")
+            filename = f"Analisis_AngkaKuat_{pilihan_posisi}_{target_str}.xlsx".replace(" ", "_")
             st.download_button(
                 label=f"📄 Unduh Excel ({filename})",
                 data=excel_bytes,
