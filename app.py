@@ -9,7 +9,7 @@ from collections import Counter
 st.set_page_config(page_title="Advanced Scanner 4D - Angka Kuat H+1", layout="wide")
 
 st.title("Aplikasi Pemindai Probabilitas 4D & Visualizer Excel")
-st.markdown("Menggali kemunculan angka di H+1 serta mengidentifikasi **🔥 Angka Kuat** (frekuensi muncul $\ge$ 5 kali).")
+st.markdown("Menggali kemunculan angka di H+1 serta mengidentifikasi **🔥 Angka Kuat** secara ketat.")
 
 # 1. Komponen Unggah File
 uploaded_file = st.file_uploader("Unggah file Excel referensi (misal: HK.xlsx)", type=["xlsx", "xls"])
@@ -81,16 +81,14 @@ if uploaded_file is not None:
         # 4. Mesin Pencarian Pola H+1
         for i in range(len(daily_data) - 1):
             if mode_analisis == "1 Digit (Tunggal)":
-                # Cari 1 posisi, ambil 1 posisi di H+1
                 if daily_data[i][indeks_posisi[0]] == target_1:
                     hari_ditemukan += 1
                     next_val = daily_data[i+1][indeks_posisi[0]]
                     next_angka_list.append(str(next_val))
             else:
-                # Cari Kombinasi, ambil SEMUA posisi (4 digit) di H+1
                 if daily_data[i][indeks_posisi[0]] == target_1 and daily_data[i][indeks_posisi[1]] == target_2:
                     hari_ditemukan += 1
-                    for digit in daily_data[i+1]: # Ekstrak As, Kop, Kepala, Ekor dari H+1
+                    for digit in daily_data[i+1]: 
                         next_angka_list.append(str(digit))
                         
         # 5. Kalkulasi dan Tampilan Statistik
@@ -99,13 +97,10 @@ if uploaded_file is not None:
             
             # Hitung Frekuensi
             counts = Counter(next_angka_list)
-            
-            # Tentukan judul kolom berdasarkan mode
             kolom_hasil = f"Hasil {pilihan_posisi} (H+1)" if mode_analisis == "1 Digit (Tunggal)" else "Angka H+1 (Semua Posisi)"
             
             result_df = pd.DataFrame(counts.items(), columns=[kolom_hasil, "Frekuensi"])
             result_df["Persentase (%)"] = (result_df["Frekuensi"] / total_found) * 100
-            # Mengurutkan dari frekuensi terbanyak
             result_df = result_df.sort_values(by="Frekuensi", ascending=False).reset_index(drop=True)
             
             angka_kuat_list = []
@@ -114,20 +109,41 @@ if uploaded_file is not None:
             
             # Tampilan Khusus Mode 2 Digit (Angka Kuat di semua posisi)
             if mode_analisis == "2 Digit Kombinasi (As-Kop / Kepala-Ekor)":
-                # Filter khusus angka tunggal yang frekuensinya >= 5
+                # Filter Awal: Minimal 5x
                 angka_kuat_df = result_df[result_df["Frekuensi"] >= 5].copy()
+                
+                # --- LOGIKA PENYARINGAN EKSTRA KETAT ---
+                if len(angka_kuat_df) > 4:
+                    max_freq = int(angka_kuat_df['Frekuensi'].max())
+                    filter_berhasil = False
+                    
+                    # Naikkan syarat batas frekuensi pelan-pelan sampai jumlah sisa angka <= 4
+                    for threshold in range(6, max_freq + 1):
+                        temp_df = result_df[result_df["Frekuensi"] >= threshold].copy()
+                        if len(temp_df) <= 4 and len(temp_df) > 0:
+                            angka_kuat_df = temp_df
+                            st.warning(f"⚠️ **Filter Ekstra Ketat Aktif:** Ditemukan terlalu banyak angka kuat. Syarat kelulusan dinaikkan menjadi minimal muncul **{threshold} kali**.")
+                            filter_berhasil = True
+                            break
+                    
+                    # Jika masih gagal (karena banyak yang seri di frekuensi tertinggi), ambil peringkat 1 saja
+                    if not filter_berhasil:
+                        angka_kuat_df = result_df[result_df["Frekuensi"] == max_freq].copy()
+                        st.warning(f"⚠️ **Filter Ekstra Ketat Aktif:** Hanya mengambil angka dengan kemunculan tertinggi mutlak (**{max_freq} kali**).")
+                # ---------------------------------------
+
                 angka_kuat_list = angka_kuat_df[kolom_hasil].astype(str).tolist()
                 
-                st.subheader("🔥 Identifikasi Angka Kuat (Minimal 5x Muncul di H+1)")
+                st.subheader("🔥 Identifikasi Angka Kuat (Super Filter)")
                 if not angka_kuat_df.empty:
                     angka_kuat_str = ", ".join(angka_kuat_list)
-                    st.success(f"Ditemukan Angka Kuat: **{angka_kuat_str}** (Angka-angka ini akan di-highlight hijau pada Excel).")
+                    st.success(f"Ditemukan Angka Kuat Terbanyak: **{angka_kuat_str}**")
                     
                     display_kuat_df = angka_kuat_df.copy()
                     display_kuat_df["Persentase (%)"] = display_kuat_df["Persentase (%)"].round(2).astype(str) + " %"
                     st.dataframe(display_kuat_df, use_container_width=True)
                 else:
-                    st.warning(f"Tidak ada angka yang memenuhi syarat Angka Kuat (\u2265 5 kali muncul).")
+                    st.error(f"Tidak ada angka yang memenuhi syarat minimum kemunculan (\u2265 5 kali).")
                 
                 st.divider()
                 st.subheader("📊 Statistik Seluruh Angka di H+1")
@@ -141,7 +157,7 @@ if uploaded_file is not None:
                 st.dataframe(display_df, use_container_width=True)
             with col2:
                 chart_data = result_df.copy().set_index(kolom_hasil)
-                st.bar_chart(chart_data["Frekuensi"]) # Tampilkan grafik berdasarkan jumlah frekuensi
+                st.bar_chart(chart_data["Frekuensi"])
                 
             st.divider()
             
@@ -150,15 +166,15 @@ if uploaded_file is not None:
             st.caption("Keterangan Warna pada File Excel:")
             st.markdown("- 🟡 **Warna Kuning**: Kotak angka acuan (Hari Ini) yang terpilih.")
             if mode_analisis == "2 Digit Kombinasi (As-Kop / Kepala-Ekor)":
-                st.markdown("- 🟢 **Warna Hijau**: Menandai **Angka Kuat** di baris H+1 (bisa di posisi As, Kop, Kepala, maupun Ekor).")
+                st.markdown("- 🟢 **Warna Hijau**: Menandai **Angka Kuat (Tersaring Ketat)** di baris H+1.")
             else:
                 st.markdown("- 🟢 **Warna Hijau**: Kotak angka keluaran H+1 pada posisi yang sama.")
             
             wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
             ws = wb.active
             
-            fill_target = PatternFill(start_color="FFEB3B", end_color="FFEB3B", fill_type="solid")  # Kuning
-            fill_outcome = PatternFill(start_color="A5D6A7", end_color="A5D6A7", fill_type="solid") # Hijau
+            fill_target = PatternFill(start_color="FFEB3B", end_color="FFEB3B", fill_type="solid")
+            fill_outcome = PatternFill(start_color="A5D6A7", end_color="A5D6A7", fill_type="solid")
             
             days_start_col = [1, 6, 11, 16, 21, 26, 31]
             
@@ -186,18 +202,14 @@ if uploaded_file is not None:
                         match = True
                         
                 if match:
-                    # 1. Warnai Kuning untuk Acuan (Hari Ini)
                     for idx in indeks_posisi:
                         tr, tc = daily_cells[i]['cells'][idx]
                         ws.cell(row=tr, column=tc).fill = fill_target
                     
-                    # 2. Warnai Hijau untuk H+1
                     if mode_analisis == "1 Digit (Tunggal)":
-                        # Warnai posisi yang sama saja
                         or_, oc = daily_cells[i+1]['cells'][indeks_posisi[0]]
                         ws.cell(row=or_, column=oc).fill = fill_outcome
                     else:
-                        # Mode 2 Digit: Cek ke-4 posisi di H+1, warnai hijau jika itu adalah Angka Kuat
                         for pos_idx in range(4):
                             digit_h1 = str(daily_cells[i+1]['values'][pos_idx])
                             if digit_h1 in angka_kuat_list:
@@ -210,7 +222,7 @@ if uploaded_file is not None:
             excel_bytes = excel_buffer.getvalue()
             
             # Tombol Download
-            filename = f"Analisis_AngkaKuat_{pilihan_posisi}_{target_str}.xlsx".replace(" ", "_")
+            filename = f"Analisis_Ketat_AngkaKuat_{pilihan_posisi}_{target_str}.xlsx".replace(" ", "_")
             st.download_button(
                 label=f"📄 Unduh Excel ({filename})",
                 data=excel_bytes,
